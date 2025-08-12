@@ -69,9 +69,9 @@ parser.add_argument("--device",                         type=str,       default 
                     help='Either cpu or cuda.') 
 
     # Easy options
-parser.add_argument("--epochs_for_vae",                 type=int,       default = 20000,
+parser.add_argument("--epochs_for_vae",                 type=int,       default = 10000,
                     help='How many epochs for training?') 
-parser.add_argument("--epochs_for_unet",                type=int,       default = 100000,
+parser.add_argument("--epochs_for_unet",                type=int,       default = 10000,
                     help='How many epochs for training?') 
 parser.add_argument("--batch_size",                     type=int,       default = 64,
                     help='How large are the batches used in epochs?') 
@@ -121,7 +121,7 @@ parser.add_argument('--min_dis_std',                    type=float,     default 
                     help='The discriminator\'s goal for standard deviation.') 
 
     # Presentation options
-parser.add_argument("--epochs_per_vid",                 type=int,       default = 250,
+parser.add_argument("--epochs_per_vid",                 type=int,       default = 1000,
                     help='How often are pictures and videos saved?') 
 parser.add_argument("--seeds_used",                     type=int,       default = 10,
                     help='When making pictures and videos, how many seeds?') 
@@ -212,6 +212,9 @@ for file_name in image_files:
     flipped_image_tensor = transform(flipped_image)
     images.append(flipped_image_tensor)
 all_images_tensor = torch.stack(images).to(device)
+these_pokemon = [1, 4, 7, 25, 38, 53, 63, 69, 83, 140]
+these_pokemon = [(i-1)*2 for i in these_pokemon]
+pokemon_sample = all_images_tensor[these_pokemon]
 
 
 
@@ -221,6 +224,33 @@ def get_random_batch(all_images_tensor = all_images_tensor, batch_size=64):
     indices = random.sample(range(num_images), batch_size)
     batch_tensor = all_images_tensor[indices]
     return batch_tensor
+
+
+
+def save_vae_comparison_grid(real_pokemon, vae_pokemon, filename):
+    # Move to CPU for plotting
+
+    N = real_pokemon.size(0)
+    # Build a 2 x N grid: top = originals, bottom = reconstructions
+    fig, axes = plt.subplots(2, N, figsize=(2*N, 4), squeeze=False)
+    for i in range(N):
+        # Originals
+        ax = axes[0, i]
+        ax.imshow(real_pokemon[i].cpu().permute(1, 2, 0).numpy())
+        ax.axis("off")
+        if i == 0:
+            ax.set_title("original", fontsize=10)
+
+        # Reconstructions
+        ax = axes[1, i]
+        ax.imshow(vae_pokemon[i].cpu().permute(1, 2, 0).numpy())
+        ax.axis("off")
+        if i == 0:
+            ax.set_title("reconstruction", fontsize=10)
+
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    fig.savefig(filename, dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
 
 

@@ -10,10 +10,11 @@ import torch
 from torch.optim import Adam
 import torch.nn.functional as F
 
-from utils import default_args, get_random_batch, print, duration, show_images_from_tensor
+from utils import default_args, pokemon_sample, get_random_batch, print, duration, show_images_from_tensor, save_vae_comparison_grid
 from utils_for_torch import create_interpolated_tensor, ConstrainedConv2d
 from vae import VAE
-from unet import UNET
+#from unet import UNET
+from unet_small import UNET
 
 
 
@@ -39,8 +40,9 @@ class SD:
         self.unet_opt = Adam(self.unet.parameters(), args.unet_lr)
         self.unet.train()
         
-        # Dictionary for plotting loss-information, etc.
         self.plot_vals_dict = {}
+        self.pokemon = pokemon_sample
+        self.loop = create_interpolated_tensor(self.args).to(self.args.device)
         
         self.T = 1000
         self.alpha_bar = torch.cumprod(1 - torch.linspace(1e-4, 2e-2, self.T, device=self.args.device), dim=0)  
@@ -48,43 +50,32 @@ class SD:
         
     
     @torch.no_grad()
-    def _sample(self, n=100, steps=50, cond=None):
+    def vae_test(self):
+        self.vae.eval()
+        imgs, _, _, _, _ = self.vae(self.pokemon, use_logvar=False)
+        return imgs
+
+
+
+    @torch.no_grad()
+    def unet_loop(self):
         self.vae.eval()
         self.unet.eval()
-        # Deterministic DDIM-style preview (eta=0)
-        z = torch.randn(n, 4, 8, 8, device=self.args.device)
-        ts = torch.linspace(self.T-1, 0, steps, dtype=torch.long, device=self.args.device)
-    
-        for i, t in enumerate(ts):
-            ab_t = self.alpha_bar[t].sqrt().view(1,1,1,1)
-            sig_t = (1.0 - self.alpha_bar[t]).sqrt().view(1,1,1,1)
-            predicted_epsilon = self.unet(z)  # <- later: pass t if you add time-cond
-            x0_hat = (z - sig_t * predicted_epsilon) / (ab_t + 1e-8)
-    
-            if i+1 < len(ts):
-                t_prev = ts[i+1]
-                ab_prev = self.alpha_bar[t_prev].sqrt().view(1,1,1,1)
-                sig_prev = (1.0 - self.alpha_bar[t_prev]).sqrt().view(1,1,1,1)
-                z = ab_prev * x0_hat + sig_prev * predicted_epsilon
-            else:
-                z = predicted_epsilon  # final latent
-    
-        # Decode with your VAE decoder path; your forward rescales tanh-> [0,1]
-        imgs = (self.vae.b(z) + 1) / 2
-        return imgs.clamp(0,1)
+        predicted_epsilon = self.unet(self.loop)  # <- later: pass t if you add time-cond
+        new_loop = self.loop - predicted_epsilon
+        imgs = self.vae.b(new_loop)
+        return imgs
 
         
         
-    # One step of training.
+    # Train VAE.
     def epoch_for_vae(self):
         self.vae.train()
         imgs = get_random_batch(batch_size=self.args.batch_size)
-    
-        # ---- 2) VAE step (reconstruction + KL) ----
-        decoded, encoded, mu, logvar, kl = self.vae(imgs)  # returns all five. :contentReference[oaicite:3]{index=3}
+        decoded, encoded, mu, logvar, dkl = self.vae(imgs)  # returns all five. :contentReference[oaicite:3]{index=3}
         recon_loss = F.l1_loss(decoded, imgs)               # L1 works well at 64×64
-        vae_beta = 0.05                                     # small KL pressure
-        vae_loss = recon_loss + vae_beta * kl
+        vae_beta = 0.05                                     # small DKL pressure
+        vae_loss = recon_loss + vae_beta * dkl
     
         self.vae_opt.zero_grad(set_to_none=True)
         vae_loss.backward()
@@ -94,12 +85,19 @@ class SD:
             if isinstance(module, ConstrainedConv2d):
                 module.clamp_weights()
                 
+        if self.epochs_for_vae % self.args.epochs_per_vid == 0:
+            with torch.no_grad():
+                imgs = self.vae_test()
+            save_rel = file_location + f"/generated_images/{self.args.arg_name}/VAE_epoch_{self.epochs_for_vae}.png"
+            save_vae_comparison_grid(self.pokemon, imgs, save_rel)
+        torch.cuda.empty_cache()
+                
         self.epochs_for_vae += 1
         #print(self.epochs_for_vae, end = "... ")
         
         
         
-    # One step of training.
+    # Train UNET.
     def epoch_for_unet(self):
         self.vae.eval()
         self.unet.train()
@@ -130,10 +128,9 @@ class SD:
         # ---- 4) Occasionally: save previews ----
         if self.epochs_for_unet % self.args.epochs_per_vid == 0:
             with torch.no_grad():
-                samples = self._sample(n=8, steps=50)
-            # save to: generated_images/{arg_name}/epoch_{N}/
-            save_rel = f"{self.args.arg_name}/epoch_{self.epochs_for_unet}"
-            show_images_from_tensor(samples, save_path=save_rel, fps=10)   # saves PNGs+GIF. :contentReference[oaicite:4]{index=4}
+                imgs = self.unet_loop()
+            save_rel = f"/{self.args.arg_name}/UNET_epoch_{self.epochs_for_unet}"
+            show_images_from_tensor(imgs, save_path=save_rel, fps=10)   # saves PNGs+GIF. :contentReference[oaicite:4]{index=4}
         torch.cuda.empty_cache()
         
         self.epochs_for_unet += 1
@@ -143,16 +140,30 @@ class SD:
     
     # Let's do this!
     def training(self):
+        
+        with torch.no_grad():
+            imgs = self.vae_test()
+        save_rel = file_location + f"/generated_images/{self.args.arg_name}/VAE_epoch_1.png"
+        save_vae_comparison_grid(self.pokemon, imgs, save_rel)
+        
+        print("\nTRAINING VAE:")
         for epoch in range(self.args.epochs_for_vae):
             self.epoch_for_vae()
             if(epoch % 25 == 0):
                 percent_done = 100 * self.epochs_for_vae / self.args.epochs_for_vae
-                print(f"{percent_done}%")
+                print(f"{percent_done}%", end = "... ")
+                
+        with torch.no_grad():
+            imgs = self.unet_loop()
+        save_rel = f"/{self.args.arg_name}/UNET_epoch_1"
+        show_images_from_tensor(imgs, save_path=save_rel, fps=10)
+                
+        print("\n\nTRAINING UNET:")
         for epoch in range(self.args.epochs_for_unet):
             self.epoch_for_unet()
             if(epoch % 25 == 0):
                 percent_done = 100 * self.epochs_for_unet / self.args.epochs_for_unet
-                print(f"{percent_done}%")
+                print(f"{percent_done}%", end = "... ")
             
                 
         

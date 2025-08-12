@@ -168,9 +168,9 @@ class VAE(nn.Module):
             
         # Decode, grow.
         decoded = (self.b(encoded) + 1) / 2
-        kl = -0.5*(1 + logvar - mu**2 - torch.exp(logvar)).mean()
+        dkl = -0.5*(1 + logvar - mu**2 - torch.exp(logvar)).mean()
         
-        return decoded, encoded, mu, logvar, kl
+        return decoded, encoded, mu, logvar, dkl
 
 
 

@@ -118,24 +118,52 @@ def rgb_to_circular_hsv(rgb):
 
 
 # For making smoothly transitioning seeds.
-def make_fourier_loop(num_frames, latent_dim, num_frequencies=4, generator=None):
-    t = torch.linspace(0, 2 * math.pi, num_frames, dtype=torch.float32)
-    latent_path = torch.zeros(num_frames, latent_dim)
+def make_fourier_loop(
+    num_frames: int,
+    shape=(4, 8, 8),
+    num_frequencies: int = 4,
+    generator: torch.Generator | None = None,
+    device: torch.device | str | None = None,
+    dtype: torch.dtype = torch.float32,
+):
+    """
+    Returns a smooth, seamless loop of latent seeds with shape [num_frames, C, H, W].
+    """
+    C, H, W = shape
+    latent_dim = C * H * W
+    device = torch.device(device) if device is not None else torch.device("cpu")
+
+    # Use steps=num_frames+1 and drop last to avoid duplicate frame at 0 and 2π
+    t = torch.linspace(0.0, 2.0 * math.pi, steps=num_frames + 1, dtype=dtype)
+    t = t[:-1]  # [F]
+
+    # Build on CPU for portable Generator, then move to device
+    latent_path = torch.zeros(num_frames, latent_dim, dtype=dtype)
     for k in range(1, num_frequencies + 1):
-        a_k = torch.randn(latent_dim, generator=generator) / k
-        b_k = torch.randn(latent_dim, generator=generator) / k
-        latent_path += torch.sin(k * t[:, None]) * a_k + torch.cos(k * t[:, None]) * b_k
-    latent_path = latent_path / latent_path.std()
+        a_k = torch.randn(latent_dim, generator=generator, dtype=dtype) / k
+        b_k = torch.randn(latent_dim, generator=generator, dtype=dtype) / k
+        latent_path += torch.sin(k * t)[:, None] * a_k[None, :] + \
+                       torch.cos(k * t)[:, None] * b_k[None, :]
+
+    # Whiten across the loop so each latent dimension ~ N(0,1)
+    latent_path -= latent_path.mean(dim=0, keepdim=True)
+    latent_path /= (latent_path.std(dim=0, keepdim=True).clamp_min(1e-6))
+
+    # Reshape to latent grid and move to target device
+    latent_path = latent_path.view(num_frames, C, H, W).contiguous().to(device)
     return latent_path
 
 def create_interpolated_tensor(args):
-    g = torch.Generator()
+    g = torch.Generator()              # CPU generator; reproducible across devices
     g.manual_seed(int(args.init_seed))
     return make_fourier_loop(
         num_frames=args.seeds_used * args.seed_duration,
-        latent_dim=args.seed_size,
+        shape=(4, 8, 8),
         num_frequencies=4,
-        generator=g)
+        generator=g,
+        device=args.device,
+        dtype=torch.float32,
+    )
 
 
 
