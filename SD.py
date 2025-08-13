@@ -5,6 +5,7 @@ os.chdir(file_location)
 
 from collections import Counter
 import datetime
+import numpy as np
 
 import torch 
 from torch.optim import Adam
@@ -61,9 +62,18 @@ class SD:
     def unet_loop(self):
         self.vae.eval()
         self.unet.eval()
-        predicted_epsilon = self.unet(self.loop)  # <- later: pass t if you add time-cond
+        predicted_epsilon = self.unet(self.loop, torch.tensor((3 * self.T / 10,)).to(self.args.device))
         new_loop = self.loop - predicted_epsilon
-        imgs = self.vae.b(new_loop)
+        imgs = (self.vae.decode(new_loop) + 1) / 2
+        return imgs
+
+
+
+    @torch.no_grad()
+    def unet_real(self, predicted_encodings):
+        self.vae.eval()
+        self.unet.eval()
+        imgs = (self.vae.decode(predicted_encodings) + 1) / 2
         return imgs
 
         
@@ -86,6 +96,7 @@ class SD:
                 module.clamp_weights()
                 
         if self.epochs_for_vae % self.args.epochs_per_vid == 0:
+            print("Saving VAE example...")
             with torch.no_grad():
                 imgs = self.vae_test()
             save_rel = file_location + f"/generated_images/{self.args.arg_name}/VAE_epoch_{self.epochs_for_vae}.png"
@@ -101,20 +112,18 @@ class SD:
     def epoch_for_unet(self):
         self.vae.eval()
         self.unet.train()
-        imgs = get_random_batch(batch_size=self.args.batch_size)
+        real_imgs = get_random_batch(batch_size=self.args.batch_size)
     
-        # ---- 3) Diffusion step (train UNet on ε) ----
-        with torch.no_grad():                               # encode latents without updating VAE
-            _, encoded, _, _, _ = self.vae(imgs, use_logvar=False)
+        with torch.no_grad():                          
+            _, encoded, _, _, _ = self.vae(real_imgs, use_logvar=False)
     
-        t = torch.randint(low=0, high=self.T, size=(encoded.size(0),), device=self.args.device)  # pick timesteps
+        t = torch.randint(low=0, high=self.T, size=(encoded.size(0),), device=self.args.device) 
         alpha_t = self.alpha_bar[t].sqrt().view(encoded.size(0), 1, 1, 1)
         sigma_t = (1.0 - self.alpha_bar[t]).sqrt().view(encoded.size(0), 1, 1, 1)
-    
         epsilon = torch.randn_like(encoded)
         z_t = alpha_t * encoded + sigma_t * epsilon
     
-        predicted_epsilon = self.unet(z_t)            # later: pass t if you add time-cond
+        predicted_epsilon = self.unet(z_t, t)
         unet_loss = F.mse_loss(predicted_epsilon, epsilon)
     
         self.unet_opt.zero_grad(set_to_none=True)
@@ -125,12 +134,28 @@ class SD:
             if isinstance(module, ConstrainedConv2d):
                 module.clamp_weights()
     
-        # ---- 4) Occasionally: save previews ----
         if self.epochs_for_unet % self.args.epochs_per_vid == 0:
+            print("Saving UNET examples...")
             with torch.no_grad():
                 imgs = self.unet_loop()
             save_rel = f"/{self.args.arg_name}/UNET_epoch_{self.epochs_for_unet}"
-            show_images_from_tensor(imgs, save_path=save_rel, fps=10)   # saves PNGs+GIF. :contentReference[oaicite:4]{index=4}
+            show_images_from_tensor(imgs, save_path=save_rel, fps=10)  
+            
+            with torch.no_grad():
+                _, encoded, _, _, _ = self.vae(self.pokemon, use_logvar=False)
+                
+                T = self.T
+                ts = [T-1, int(8*T/10), int(7*T/10), int(6*T/10), int(5*T/10), int(4*T/10), int(3*T/10), int(2*T/10), int(T/10), 0]
+                t = torch.tensor(ts).to(self.args.device)
+                alpha_t = self.alpha_bar[t].sqrt().view(encoded.size(0), 1, 1, 1)
+                sigma_t = (1.0 - self.alpha_bar[t]).sqrt().view(encoded.size(0), 1, 1, 1)
+                epsilon = torch.randn_like(encoded)
+                z_t = alpha_t * encoded + sigma_t * epsilon
+                predicted_epsilon = self.unet(z_t, t)
+                predicted_encodings = z_t - predicted_epsilon
+                imgs = (self.vae.decode(predicted_encodings) + 1) / 2
+            save_rel = file_location + f"/generated_images/{self.args.arg_name}/UNET_real_epoch_{self.epochs_for_unet}.png"
+            save_vae_comparison_grid(self.pokemon, imgs, save_rel) 
         torch.cuda.empty_cache()
         
         self.epochs_for_unet += 1
@@ -150,7 +175,7 @@ class SD:
         for epoch in range(self.args.epochs_for_vae):
             self.epoch_for_vae()
             if(epoch % 25 == 0):
-                percent_done = 100 * self.epochs_for_vae / self.args.epochs_for_vae
+                percent_done = round(100 * self.epochs_for_vae / self.args.epochs_for_vae, 2)
                 print(f"{percent_done}%", end = "... ")
                 
         with torch.no_grad():
@@ -162,7 +187,7 @@ class SD:
         for epoch in range(self.args.epochs_for_unet):
             self.epoch_for_unet()
             if(epoch % 25 == 0):
-                percent_done = 100 * self.epochs_for_unet / self.args.epochs_for_unet
+                percent_done = round(100 * self.epochs_for_unet / self.args.epochs_for_unet, 2)
                 print(f"{percent_done}%", end = "... ")
             
                 

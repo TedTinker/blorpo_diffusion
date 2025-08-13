@@ -69,7 +69,7 @@ parser.add_argument("--device",                         type=str,       default 
                     help='Either cpu or cuda.') 
 
     # Easy options
-parser.add_argument("--epochs_for_vae",                 type=int,       default = 10000,
+parser.add_argument("--epochs_for_vae",                 type=int,       default = 2000,
                     help='How many epochs for training?') 
 parser.add_argument("--epochs_for_unet",                type=int,       default = 10000,
                     help='How many epochs for training?') 
@@ -79,9 +79,7 @@ parser.add_argument("--dropout",                        type=int,       default 
                     help='How much dropout for the discriminator?') 
 parser.add_argument("--image_size",                     type=int,       default = 64,
                     help='How large are the pictures? (Not used much.)') 
-parser.add_argument("--seed_size",                      type=int,       default = 128,
-                    help='How large are the seeds used by the generator?') 
-parser.add_argument("--inner_state_size",               type=int,       default = 128,
+parser.add_argument("--latent_channels",                type=int,       default = 32,
                     help='How large are some linear layers.') 
 parser.add_argument('--std_min',                        type=int,       default = exp(-20),
                     help='Minimum value for standard deviation.') 
@@ -91,37 +89,17 @@ parser.add_argument("--vae_lr",                         type=float,     default 
                     help='Learning rate for generator.') 
 parser.add_argument("--unet_lr",                        type=float,     default = .001,
                     help='Learning rate for discriminator')  
-parser.add_argument("--dises",                          type=int,       default = 5,
-                    help='How many discriminators?') 
-parser.add_argument("--flips",                          type=int,       default = 4,
-                    help='How many real images and fake images are swapped?') 
 parser.add_argument("--rolling_avg_num",                type=int,       default = 10,
                     help='How many values used in the rolling average?') 
 parser.add_argument("--rolling_avg_val",                type=float,     default = .95,
                     help='Max value of discriminator accuracy for training.')  
-parser.add_argument("--min_real",                       type=float,     default = .7,
-                    help='Real images are typically labeled as 1, but it can help to reduce that.') 
-parser.add_argument("--max_real",                       type=float,     default = .9,
-                    help='Real images are typically labeled as 1, but it can help to reduce that.')  
 parser.add_argument("--stat_quantiles",                 type=list,     default = [0.05, .5, 0.95],
                     help='Quantiles for the get_stats function.')  
 parser.add_argument("--use_hsv",                        type=bool,     default = True,
                     help='Should the discriminator use the HSV?')  
 
-    # Awesome options
-parser.add_argument('--extrinsic',                      type=float,     default = 5,
-                    help='Value of extrinsic rewards (generating good pictures).') 
-parser.add_argument('--alpha',                          type=float,     default = 0,
-                    help='How much generator\'s entropy is rewarded.') 
-parser.add_argument('--beta',                           type=float,     default = 0,
-                    help='How much generator\'s curiosity is rewarded.') 
-parser.add_argument('--dis_alpha',                      type=float,     default = 0,
-                    help='How much discriminator\'s entropy is punished.') 
-parser.add_argument('--min_dis_std',                    type=float,     default = 0,
-                    help='The discriminator\'s goal for standard deviation.') 
-
     # Presentation options
-parser.add_argument("--epochs_per_vid",                 type=int,       default = 1000,
+parser.add_argument("--epochs_per_vid",                 type=int,       default = 250,
                     help='How often are pictures and videos saved?') 
 parser.add_argument("--seeds_used",                     type=int,       default = 10,
                     help='When making pictures and videos, how many seeds?') 

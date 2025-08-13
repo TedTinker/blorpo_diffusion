@@ -6,7 +6,7 @@ from torch.distributions import Normal
 import torch.nn.functional as F
 from kornia.color import rgb_to_hsv 
 
-from utils import default_args
+from utils import default_args, args
 
 
 
@@ -120,7 +120,7 @@ def rgb_to_circular_hsv(rgb):
 # For making smoothly transitioning seeds.
 def make_fourier_loop(
     num_frames: int,
-    shape=(4, 8, 8),
+    shape=(args.latent_channels, 8, 8),
     num_frequencies: int = 4,
     generator: torch.Generator | None = None,
     device: torch.device | str | None = None,
@@ -158,7 +158,7 @@ def create_interpolated_tensor(args):
     g.manual_seed(int(args.init_seed))
     return make_fourier_loop(
         num_frames=args.seeds_used * args.seed_duration,
-        shape=(4, 8, 8),
+        shape=(args.latent_channels, 8, 8),
         num_frequencies=4,
         generator=g,
         device=args.device,
@@ -287,149 +287,30 @@ class SelfAttention(nn.Module):
     
     
     
-# My personal kind of layer. Allows growing, shrinking, and attention.
-class CNN_Attention_Blend(nn.Module):
-    def __init__(self, 
-                 in_shape = (16, 16, 16, 16), 
-                 out_channels = 32, 
-                 kernel_size = 3, 
-                 grow = False,
-                 shrink = False, 
-                 paying_attention = False, 
-                 attention_kernel_size = 1, 
-                 args = default_args):
-        super(CNN_Attention_Blend, self).__init__()
-        
-        # This is my kludgey way to make inputs into self-values.
-        self.__dict__.update({k: v for k, v in locals().items() if k != 'self'})
-        
-        # This is my kludgey way to see qualities that layers should have.
-        example = torch.zeros(in_shape)
-        print("Start of CAB:", example.shape)
-        
-        mid_channels = out_channels
-        if(self.shrink and paying_attention):
-            mid_channels = in_shape[1]
-        if(self.grow or (not self.grow and not self.shrink)):
-            mid_channels = in_shape[1]
-        
-        padding_size = ((kernel_size-1)//2, (kernel_size-1)//2)
-        
-        if(self.grow or (not self.grow and not self.shrink)):
-            self.x_in = nn.Sequential(
-                ConstrainedConv2d(
-                    in_channels = example.shape[1], 
-                    out_channels = mid_channels,
-                    kernel_size = kernel_size,
-                    padding = padding_size,
-                    padding_mode = "reflect"),
-                nn.BatchNorm2d(mid_channels),
-                nn.LeakyReLU())
-            
-            example_2 = self.x_in(example)
-            print("CAB in:", example.shape)
-            
-        if(self.shrink):
-            self.x_in = nn.Sequential(
-                ConstrainedConv2d(
-                    in_channels = example.shape[1], 
-                    out_channels = mid_channels,
-                    kernel_size = kernel_size,
-                    padding = padding_size,
-                    padding_mode = "reflect"),
-                SpaceToDepth(block_size=2),  
-                nn.BatchNorm2d(mid_channels * 4),
-                nn.LeakyReLU())
-            
-            example_2 = self.x_in(example)
-            print("CAB in (shrink):", example.shape)
-        
-        
-        
-        if(paying_attention):
-            if(self.shrink):
-                example = space_to_depth(example, 2)
-            self.attention = nn.Sequential(
-                SelfAttention(in_channels = example.shape[1], kernel_size = attention_kernel_size))
-            example = self.attention(example)
-            example_2 = example + example_2
-            print("CAB attention:", example_2.shape)
-            
-            
-            
-        if(self.shrink or (not self.grow and not self.shrink)):
-            self.x_out = nn.Sequential(
-                ConstrainedConv2d(
-                    in_channels = example_2.shape[1], 
-                    out_channels = out_channels,
-                    kernel_size = kernel_size,
-                    padding = padding_size,
-                    padding_mode = "reflect"))
-
-            example = self.x_out(example_2)
-            print("CAB out:", example.shape)
-            
-        if(self.grow):
-            self.x_out = nn.Sequential(
-                ConstrainedConv2d(
-                    in_channels = example_2.shape[1],
-                    out_channels = out_channels,
-                    kernel_size = kernel_size,
-                    padding = padding_size,
-                    padding_mode = "reflect"),
-                nn.Upsample(
-                    scale_factor = 2,
-                    mode = "bilinear",
-                    align_corners = True))
-            
-            example = self.x_out(example_2)
-            print("CAB out (grow):", example.shape)
-    
-    def forward(self, x):
-        x_2 = self.x_in(x)
-        if(self.paying_attention):
-            if(self.shrink):
-                x = space_to_depth(x, 2)
-            attention = self.attention(x)
-            x_2 = x_2 + attention
-        x = self.x_out(x_2)
-        return x
-    
-    
-    
-# Multi-Kernel CAB (MKC).
-class Multi_Kernel_CAB(nn.Module):
+# Multi-Kernel Conv (MKC).
+class Multi_Kernel_Conv(nn.Module):
     
     def __init__(
             self, 
-            in_shape = (16, 16, 16, 16), 
+            in_channels = 16, 
             out_channels = [8, 8, 8, 8], 
             kernel_sizes = [3, 3, 3, 3], 
-            grow = False,
-            shrink = False, 
-            paying_attention = False, 
-            attention_kernel_sizes = [1, 1, 1, 1], 
             args = default_args):
-        super(Multi_Kernel_CAB, self).__init__()
+        super(Multi_Kernel_Conv, self).__init__()
         
         assert len(kernel_sizes) == len(out_channels) , "kernel_size length should match out_channel length."
-        if(paying_attention):
-            assert len(kernel_sizes) == len(attention_kernel_sizes) , "kernel_sizes length should match attention_kernel_size length."
-        else:
-            attention_kernel_sizes = kernel_sizes
         
         self.CABs = nn.ModuleList()
         for i in range(len(kernel_sizes)):
+            kernel_size = kernel_sizes[i]
+            padding_size = ((kernel_size-1)//2, (kernel_size-1)//2)
             layer = nn.Sequential(
-                CNN_Attention_Blend(
-                     in_shape = in_shape, 
-                     out_channels = out_channels[i], 
-                     kernel_size = kernel_sizes[i], 
-                     grow = grow,
-                     shrink = shrink, 
-                     paying_attention = paying_attention, 
-                     attention_kernel_size = attention_kernel_sizes[i], 
-                     args = default_args))
+                        ConstrainedConv2d(
+                            in_channels = in_channels, 
+                            out_channels = out_channels[i],
+                            kernel_size = kernel_size,
+                            padding = padding_size,
+                            padding_mode = "reflect"))
             self.CABs.append(layer)
                 
     def forward(self, x):

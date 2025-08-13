@@ -12,7 +12,7 @@ from torch.profiler import profile, record_function, ProfilerActivity
 import torch.nn.functional as F
 
 from utils import default_args
-from utils_for_torch import init_weights, ConstrainedConv2d, var, sample, Multi_Kernel_CAB, add_position_layers, SpaceToDepth, DepthToSpace
+from utils_for_torch import init_weights, ConstrainedConv2d, var, sample, Multi_Kernel_Conv, add_position_layers, SpaceToDepth, DepthToSpace
 
 
 
@@ -25,52 +25,52 @@ class VAE(nn.Module):
         
         # This is my kludgey way to see qualities that layers should have.
         example = torch.zeros(self.args.batch_size, 3, self.args.image_size, self.args.image_size)
+        B = example.shape[0]
         print(f"\nStart of VAE:\t{example.shape}")
                      
         
         
-        self.a = nn.Sequential(
+        self.encode = nn.Sequential(
             # 64 by 64
-            ConstrainedConv2d(
+            Multi_Kernel_Conv(
                 in_channels = example.shape[1], 
-                out_channels = 32,
-                kernel_size = 3,
-                padding = 1,
-                padding_mode = "reflect"),
+                out_channels = [16, 8, 8], 
+                kernel_sizes = [3, 5, 7], 
+                args = self.args),
             SpaceToDepth(block_size=2),  
+            nn.BatchNorm2d(128),
             nn.LeakyReLU(),
             # 32 by 32
             
-            ConstrainedConv2d(
-                in_channels = 128, 
-                out_channels = 32,
-                kernel_size = 3,
-                padding = 1,
-                padding_mode = "reflect"),
+            Multi_Kernel_Conv(
+                in_channels = 128,
+                out_channels = [16, 16], 
+                kernel_sizes = [3, 5], 
+                args = self.args),
             SpaceToDepth(block_size=2),  
+            nn.BatchNorm2d(128),
             nn.LeakyReLU(),
             # 16 by 16
             
-            ConstrainedConv2d(
-                in_channels = 128, 
-                out_channels = 32,
-                kernel_size = 3,
-                padding = 1,
-                padding_mode = "reflect"),
+            Multi_Kernel_Conv(
+                in_channels = 128,
+                out_channels = [16, 16], 
+                kernel_sizes = [3, 5], 
+                args = self.args),
             SpaceToDepth(block_size=2),  
             nn.LeakyReLU())
             # 8 by 8
             
-        example = self.a(example)
-        print(f"VAE a:\t{example.shape}")
+        example = self.encode(example)
+        print(f"VAE encode:\t{example.shape}")
             
         self.mu = nn.Sequential(
             nn.Conv2d(
                 in_channels = 128, 
-                out_channels = 4,
+                out_channels = self.args.latent_channels,
                 kernel_size = 1))
         
-        self.logvar = nn.Conv2d(128, 4, 1)
+        self.logvar = nn.Conv2d(128, self.args.latent_channels, 1)
                 
         example_mu = self.mu(example)
         example_logvar = self.logvar(example)
@@ -79,14 +79,14 @@ class VAE(nn.Module):
 
         # Encoded! 
         
-        self.b = nn.Sequential(
+        self.decode = nn.Sequential(
             # 8 by 8
-            ConstrainedConv2d(
-                in_channels = example.shape[1], 
-                out_channels = 32,
-                kernel_size = 3,
-                padding = 1,
-                padding_mode = "reflect"),
+            Multi_Kernel_Conv(
+                in_channels = self.args.latent_channels,
+                out_channels = [32], 
+                kernel_sizes = [3], 
+                args = self.args),
+            nn.BatchNorm2d(32),
             nn.LeakyReLU(),
             
             ConstrainedConv2d(
@@ -94,12 +94,12 @@ class VAE(nn.Module):
                 out_channels = 32,
                 kernel_size = 1),
             DepthToSpace(block_size = 2),
-            ConstrainedConv2d(
-                in_channels = 8, 
-                out_channels = 32,
-                kernel_size = 3,
-                padding = 1,
-                padding_mode = "reflect"),
+            Multi_Kernel_Conv(
+                in_channels = 8,
+                out_channels = [32], 
+                kernel_sizes = [3], 
+                args = self.args),
+            nn.BatchNorm2d(32),
             nn.LeakyReLU(),
             # 16 by 16
             
@@ -108,12 +108,12 @@ class VAE(nn.Module):
                 out_channels = 32,
                 kernel_size = 1),
             DepthToSpace(block_size = 2),
-            ConstrainedConv2d(
-                in_channels = 8, 
-                out_channels = 32,
-                kernel_size = 3,
-                padding = 1,
-                padding_mode = "reflect"),
+            Multi_Kernel_Conv(
+                in_channels = 8,
+                out_channels = [16, 16], 
+                kernel_sizes = [3, 5], 
+                args = self.args),
+            nn.BatchNorm2d(32),
             nn.LeakyReLU(),
             # 32 by 32
             
@@ -122,22 +122,30 @@ class VAE(nn.Module):
                 out_channels = 32,
                 kernel_size = 1),
             DepthToSpace(block_size = 2),
-            ConstrainedConv2d(
-                in_channels = 8, 
-                out_channels = 32,
-                kernel_size = 3,
-                padding = 1,
-                padding_mode = "reflect"),
+            Multi_Kernel_Conv(
+                in_channels = 8,
+                out_channels = [16, 16], 
+                kernel_sizes = [3, 5], 
+                args = self.args),
+            nn.BatchNorm2d(32),
             nn.LeakyReLU(),
+            # 64 by 64
             
+            Multi_Kernel_Conv(
+                in_channels = 32,
+                out_channels = [16, 8, 8], 
+                kernel_sizes = [3, 5, 7], 
+                args = self.args),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(),
             nn.Conv2d(
                 in_channels = 32, 
                 out_channels = 3,
                 kernel_size = 1),
             nn.Tanh())
             
-        example = self.b(example)
-        print(f"VAE b:\t{example.shape}")
+        example = self.decode(example)
+        print(f"VAE decode:\t{example.shape}")
         
         self.apply(init_weights)
         self.to(self.args.device)
@@ -154,7 +162,7 @@ class VAE(nn.Module):
     def forward(self, images, use_logvar = True, clamp_logvar = False):
         
         # Shrink.
-        a = self.a(images)
+        a = self.encode(images)
                     
         # Encode.
         mu = self.mu(a)
@@ -167,7 +175,7 @@ class VAE(nn.Module):
             encoded = mu
             
         # Decode, grow.
-        decoded = (self.b(encoded) + 1) / 2
+        decoded = (self.decode(encoded) + 1) / 2
         dkl = -0.5*(1 + logvar - mu**2 - torch.exp(logvar)).mean()
         
         return decoded, encoded, mu, logvar, dkl
