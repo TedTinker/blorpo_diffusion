@@ -89,10 +89,11 @@ class VAE(nn.Module):
             nn.BatchNorm2d(32),
             nn.LeakyReLU(),
             
-            ConstrainedConv2d(
-                in_channels = 32, 
-                out_channels = 32,
-                kernel_size = 1),
+            Multi_Kernel_Conv(
+                in_channels = 32,
+                out_channels = [32], 
+                kernel_sizes = [1], 
+                args = self.args),
             DepthToSpace(block_size = 2),
             Multi_Kernel_Conv(
                 in_channels = 8,
@@ -103,10 +104,11 @@ class VAE(nn.Module):
             nn.LeakyReLU(),
             # 16 by 16
             
-            ConstrainedConv2d(
-                in_channels = 32, 
-                out_channels = 32,
-                kernel_size = 1),
+            Multi_Kernel_Conv(
+                in_channels = 32,
+                out_channels = [32], 
+                kernel_sizes = [1], 
+                args = self.args),
             DepthToSpace(block_size = 2),
             Multi_Kernel_Conv(
                 in_channels = 8,
@@ -117,10 +119,11 @@ class VAE(nn.Module):
             nn.LeakyReLU(),
             # 32 by 32
             
-            ConstrainedConv2d(
-                in_channels = 32, 
-                out_channels = 32,
-                kernel_size = 1),
+            Multi_Kernel_Conv(
+                in_channels = 32,
+                out_channels = [32], 
+                kernel_sizes = [1], 
+                args = self.args),
             DepthToSpace(block_size = 2),
             Multi_Kernel_Conv(
                 in_channels = 8,

@@ -71,8 +71,16 @@ parser.add_argument("--device",                         type=str,       default 
     # Easy options
 parser.add_argument("--epochs_for_vae",                 type=int,       default = 2000,
                     help='How many epochs for training?') 
+parser.add_argument("--vae_lr",                         type=float,     default = .001,
+                    help='Learning rate for generator.') 
+parser.add_argument("--vae_beta",                        type=float,    default = .05,
+                    help='Learning rate for discriminator')  
+
 parser.add_argument("--epochs_for_unet",                type=int,       default = 10000,
                     help='How many epochs for training?') 
+parser.add_argument("--unet_lr",                        type=float,     default = .001,
+                    help='Learning rate for discriminator')  
+
 parser.add_argument("--batch_size",                     type=int,       default = 64,
                     help='How large are the batches used in epochs?') 
 parser.add_argument("--dropout",                        type=int,       default = .01,
@@ -85,10 +93,6 @@ parser.add_argument('--std_min',                        type=int,       default 
                     help='Minimum value for standard deviation.') 
 parser.add_argument('--std_max',                        type=int,       default = exp(2),
                     help='Maximum value for standard deviation.') 
-parser.add_argument("--vae_lr",                         type=float,     default = .001,
-                    help='Learning rate for generator.') 
-parser.add_argument("--unet_lr",                        type=float,     default = .001,
-                    help='Learning rate for discriminator')  
 parser.add_argument("--rolling_avg_num",                type=int,       default = 10,
                     help='How many values used in the rolling average?') 
 parser.add_argument("--rolling_avg_val",                type=float,     default = .95,
@@ -205,12 +209,12 @@ def get_random_batch(all_images_tensor = all_images_tensor, batch_size=64):
 
 
 
-def save_vae_comparison_grid(real_pokemon, vae_pokemon, filename):
+def save_vae_comparison_grid(real_pokemon, vae_pokemon, unet_pokemon, filename):
     # Move to CPU for plotting
 
     N = real_pokemon.size(0)
     # Build a 2 x N grid: top = originals, bottom = reconstructions
-    fig, axes = plt.subplots(2, N, figsize=(2*N, 4), squeeze=False)
+    fig, axes = plt.subplots(3, N, figsize=(2*N, 4), squeeze=False)
     for i in range(N):
         # Originals
         ax = axes[0, i]
@@ -225,6 +229,13 @@ def save_vae_comparison_grid(real_pokemon, vae_pokemon, filename):
         ax.axis("off")
         if i == 0:
             ax.set_title("reconstruction", fontsize=10)
+            
+        # Reconstructions after unet
+        ax = axes[2, i]
+        ax.imshow(unet_pokemon[i].cpu().permute(1, 2, 0).numpy())
+        ax.axis("off")
+        if i == 0:
+            ax.set_title("reconstruction w/ unet", fontsize=10)
 
     os.makedirs(os.path.dirname(filename), exist_ok=True)
     fig.savefig(filename, dpi=150, bbox_inches="tight")
