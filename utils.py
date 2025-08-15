@@ -69,14 +69,14 @@ parser.add_argument("--device",                         type=str,       default 
                     help='Either cpu or cuda.') 
 
     # Easy options
-parser.add_argument("--epochs_for_vae",                 type=int,       default = 2000,
+parser.add_argument("--epochs_for_vae",                 type=int,       default = 3000,
                     help='How many epochs for training?') 
 parser.add_argument("--vae_lr",                         type=float,     default = .001,
                     help='Learning rate for generator.') 
 parser.add_argument("--vae_beta",                        type=float,    default = .05,
                     help='Learning rate for discriminator')  
 
-parser.add_argument("--epochs_for_unet",                type=int,       default = 10000,
+parser.add_argument("--epochs_for_unet",                type=int,       default = 500000,
                     help='How many epochs for training?') 
 parser.add_argument("--unet_lr",                        type=float,     default = .001,
                     help='Learning rate for discriminator')  
@@ -105,9 +105,9 @@ parser.add_argument("--use_hsv",                        type=bool,     default =
     # Presentation options
 parser.add_argument("--epochs_per_vid",                 type=int,       default = 250,
                     help='How often are pictures and videos saved?') 
-parser.add_argument("--seeds_used",                     type=int,       default = 10,
+parser.add_argument("--seeds_used",                     type=int,       default = 5,
                     help='When making pictures and videos, how many seeds?') 
-parser.add_argument("--seed_duration",                  type=int,       default = 10,
+parser.add_argument("--seed_duration",                  type=int,       default = 5,
                     help='When making pictures and videos, how many steps transationing from one to another?') 
 
 
@@ -209,12 +209,12 @@ def get_random_batch(all_images_tensor = all_images_tensor, batch_size=64):
 
 
 
-def save_vae_comparison_grid(real_pokemon, vae_pokemon, unet_pokemon, filename):
+def save_vae_comparison_grid(real_pokemon, vae_pokemon, noisy_pokemon, unet_pokemon, filename):
     # Move to CPU for plotting
 
     N = real_pokemon.size(0)
     # Build a 2 x N grid: top = originals, bottom = reconstructions
-    fig, axes = plt.subplots(3, N, figsize=(2*N, 4), squeeze=False)
+    fig, axes = plt.subplots(4, N, figsize=(2*N, 4), squeeze=False)
     for i in range(N):
         # Originals
         ax = axes[0, i]
@@ -232,6 +232,13 @@ def save_vae_comparison_grid(real_pokemon, vae_pokemon, unet_pokemon, filename):
             
         # Reconstructions after unet
         ax = axes[2, i]
+        ax.imshow(noisy_pokemon[i].cpu().permute(1, 2, 0).numpy())
+        ax.axis("off")
+        if i == 0:
+            ax.set_title("reconstruction of noisy", fontsize=10)
+            
+        # Reconstructions after unet
+        ax = axes[3, i]
         ax.imshow(unet_pokemon[i].cpu().permute(1, 2, 0).numpy())
         ax.axis("off")
         if i == 0:
@@ -245,7 +252,6 @@ def save_vae_comparison_grid(real_pokemon, vae_pokemon, unet_pokemon, filename):
 
 # Make pictures, then make gif transitioning between them.
 def show_images_from_tensor(image_tensor, save_path='output_folder', fps=10):
-    save_path = file_location + f"/generated_images/{save_path}"
     os.makedirs(save_path, exist_ok=True)
 
     image_tensor = image_tensor.detach()
@@ -311,113 +317,36 @@ def make_animation(save_dir, image_name='1.png', output_name='animation_1.gif'):
 # MUST BE CHANGED FOR STABLE DIFFUSION
 # Plotting losses, entropy, curiosity, etc.
 def plot_vals(plot_vals_dict, save_path='losses.png', fontsize=7):
-    # Define epochs
-    epochs = range(1, len(plot_vals_dict["gen_loss"]) + 1)
 
-    # Calculate per-discriminator values
-    num_dis = len(plot_vals_dict["dis_losses_real"][0])
-
-    def get_dis_vals(key):
-        # Transpose: from list of epochs of lists → list of lists per discriminator
-        return list(zip(*plot_vals_dict[key]))
-
-    dis_losses_real = get_dis_vals("dis_losses_real")
-    dis_losses_fake = get_dis_vals("dis_losses_fake")
-    dis_complexity_loss = get_dis_vals("dis_complexity_loss")
-    dis_correct_rate_real = [[100 * val for val in d] for d in get_dis_vals("dis_correct_rate_real")]
-    dis_correct_rate_fake = [[100 * val for val in d] for d in get_dis_vals("dis_correct_rate_fake")]
-    dis_mu = get_dis_vals("dis_mu")
-    dis_std_real = [[log(val) for val in d] for d in get_dis_vals("dis_std_real")]
-    dis_std_fake = [[log(val) for val in d] for d in get_dis_vals("dis_std_fake")]
-
+    vae_epochs = [i for i in range(len(plot_vals_dict["vae_loss"]))]
+    unet_epochs = [i for i in range(len(plot_vals_dict["unet_loss"]))]
+    
     # Plotting
     plt.figure(figsize=(12, 6))
 
-    # Generator Losses
-    total_gen_loss = [
-        l + e + c
-        for l, e, c in zip(plot_vals_dict["gen_loss"],
-                           plot_vals_dict["gen_entropy_loss"],
-                           plot_vals_dict["gen_curiosity_loss"])
-    ]
-    plt.subplot(2, 3, 1)
-    plt.plot(epochs, plot_vals_dict["gen_loss"], 'red', label="Generator Loss", alpha=0.8)
-    plt.plot(epochs, plot_vals_dict["gen_entropy_loss"], 'green', label="Loss for Entropy", alpha=0.8)
-    plt.plot(epochs, plot_vals_dict["gen_curiosity_loss"], 'blue', label="Loss for Curiosity", alpha=0.8)
-    plt.plot(epochs, total_gen_loss, 'black', label="Total", alpha=0.8)
+    plt.subplot(1, 2, 1)
+    plt.plot(vae_epochs, plot_vals_dict["vae_loss"], 'red', label="VAE Loss", alpha=0.8)
+    plt.plot(vae_epochs, plot_vals_dict["dkl_loss"], 'green', label="DKL Loss", alpha=0.8)
     plt.xlabel("Epochs")
-    plt.ylabel("Generator Loss")
-    plt.ylim(-1, 25)
-    plt.title("Generator Losses Over Epochs")
+    plt.ylabel("VAE Loss")
+    #plt.ylim(-1, 25)
+    plt.title("VAE Losses")
     plt.legend(fontsize=fontsize)
     plt.grid(True)
 
-    # Discriminator Losses
-    plt.subplot(2, 3, 2)
-    for i in range(num_dis):
-        label = "Discriminator Loss (real)" if i == 0 else None
-        plt.plot(epochs, dis_losses_real[i], 'red', alpha=0.4, label=label)
-        label = "Discriminator Loss (fake)" if i == 0 else None
-        plt.plot(epochs, dis_losses_fake[i], 'green', alpha=0.4, label=label)
-        label = "Discriminator Loss (complexity)" if i == 0 else None
-        plt.plot(epochs, dis_complexity_loss[i], 'blue', alpha=0.4, label=label)
-
-    total_dis_loss = []
-    for r, f, c in zip(dis_losses_real, dis_losses_fake, dis_complexity_loss):
-        summed = [ri + fi + ci for ri, fi, ci in zip(r, f, c)]
-        total_dis_loss.append(summed)
-        
-    for i in range(num_dis):
-        label = "Total" if i == 0 else None
-        plt.plot(epochs, total_dis_loss[i], 'black', label=label, alpha=0.8)
-    plt.xlabel("Epochs")
-    plt.ylabel("Discriminator Loss")
-    plt.ylim(0, 3)
-    plt.title("Discriminator Losses Over Epochs")
+    plt.subplot(1, 2, 2)
+    plt.plot(unet_epochs, plot_vals_dict["unet_loss"], 'red', label="UNET Loss", alpha=0.8)
+    plt.xlabel("UNET Epochs")
+    plt.ylabel("UNET Loss")
+    #plt.ylim(-1, 25)
+    plt.title("UNET Losses")
     plt.legend(fontsize=fontsize)
     plt.grid(True)
 
-    # Correct Rates
-    plt.subplot(2, 3, 3)
-    for i in range(num_dis):
-        label = "Correct Rate (real)" if i == 0 else None
-        plt.plot(epochs, dis_correct_rate_real[i], 'red', alpha=0.4, label=label)
-        label = "Correct Rate (fake)" if i == 0 else None
-        plt.plot(epochs, dis_correct_rate_fake[i], 'green', alpha=0.4, label=label)
-    plt.xlabel("Epochs")
-    plt.ylabel("Correct Rate (%)")
-    plt.ylim(0, 100)
-    plt.title("Discriminator Correct Rates Over Epochs")
-    plt.legend(fontsize=fontsize)
-    plt.grid(True)
-
-    # Generator STD
-    plt.subplot(2, 3, 4)
-    plt.plot(epochs, plot_vals_dict["gen_std"], 'red', label="Generator STD", alpha=0.8)
-    plt.xlabel("Epochs")
-    plt.ylabel("STD")
-    plt.ylim(0, 1.3)
-    plt.title("Generator Standard Deviation")
-    plt.legend(fontsize=fontsize)
-    plt.grid(True)
-
-    # Discriminator STD (log)
-    plt.subplot(2, 3, 5)
-    for i in range(num_dis):
-        label = "Log STD (real)" if i == 0 else None
-        plt.plot(epochs, dis_std_real[i], 'red', alpha=0.4, label=label)
-        label = "Log STD (fake)" if i == 0 else None
-        plt.plot(epochs, dis_std_fake[i], 'green', alpha=0.4, label=label)
-    plt.xlabel("Epochs")
-    plt.ylabel("Log STD")
-    plt.ylim(-8, 0.1)
-    plt.title("Discriminator Log-Standard Deviations")
-    plt.legend(fontsize=fontsize)
-    plt.grid(True)
-
+    name_part_1 = 'VAE' if len(unet_epochs) == 0 else 'UNET'
+    name_part_2 = len(vae_epochs) if len(unet_epochs) == 0 else len(unet_epochs)
     plt.tight_layout()
-    save_path = f"generated_images/{save_path}"
-    plt.savefig(save_path)
+    plt.savefig(save_path + f"/losses_{name_part_1}_{name_part_2}.png")
     plt.close()
     
     

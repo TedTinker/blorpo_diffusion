@@ -12,7 +12,7 @@ import torch
 from torch.optim import Adam
 import torch.nn.functional as F
 
-from utils import default_args, pokemon_sample, get_random_batch, print, duration, show_images_from_tensor, save_vae_comparison_grid
+from utils import default_args, pokemon_sample, plot_vals, get_random_batch, print, duration, show_images_from_tensor, save_vae_comparison_grid
 from utils_for_torch import create_interpolated_tensor, ConstrainedConv2d
 from vae import VAE
 #from unet import UNET
@@ -42,7 +42,10 @@ class SD:
         self.unet_opt = Adam(self.unet.parameters(), args.unet_lr)
         self.unet.train()
         
-        self.plot_vals_dict = {}
+        self.plot_vals_dict = {
+            "vae_loss" : [],
+            "dkl_loss" : [],
+            "unet_loss" : []}
         self.pokemon = pokemon_sample
         self.loop = create_interpolated_tensor(self.args).to(self.args.device)
         
@@ -53,27 +56,79 @@ class SD:
         self.T = T
         self.alpha_bar = torch.cumprod(1 - torch.linspace(1e-4, 2e-2, self.T, device=self.args.device), dim=0)  
 
-
-
+    
+        
     @torch.no_grad()
-    def unet_loop(self):
+    def unet_loop(self, t_start_frac: float = .6, eta: float = 0.0, match_stats: bool = True):
+        """
+        Generate images by:
+          1) Interpreting self.loop as proposed clean latents x0~ (shape [F,C,8,8])
+          2) (Optional) Matching mean/std to VAE latent stats
+          3) Forward-diffusing to t_start
+          4) DDIM reverse to t=0, consistent with training z_t construction
+    
+        t_start_frac in (0,1]: 0.7 means start at t ≈ 0.7*T (moderate noise)
+        eta=0 => deterministic DDIM; >0 adds stochasticity.
+        """
         self.vae.eval()
         self.unet.eval()
-        predicted_epsilon = self.unet(self.loop, torch.tensor((3 * self.T / 10,)).to(self.args.device))
-        new_loop = self.loop - predicted_epsilon
-        imgs = (self.vae.decode(new_loop) + 1) / 2
+    
+        # ---- helpers for schedule (match training) ----
+        def abar(idx): return self.alpha_bar[idx].view(1,1,1,1)
+        def a(idx):    return abar(idx).sqrt()
+        def s(idx):    return (1.0 - abar(idx)).sqrt()
+    
+        # ---- 1) proposed clean latents ----
+        x0 = self.loop.clone()  # [F, C, 8, 8]
+    
+        # ---- 2) (optional) match mean/std of VAE latents ----
+        if match_stats:
+            # Use your fixed Pokémon batch to estimate latent stats (mu) once
+            _, _, mu, _, _ = self.vae(self.pokemon, use_logvar=False)    # mu is the clean latent proxy
+            mu_mean = mu.mean(dim=(0,2,3), keepdim=True)                 # [1,C,1,1]
+            mu_std  = mu.std(dim=(0,2,3), keepdim=True).clamp_min(1e-6)
+            # self.loop is whitened to ~N(0,1) by make_fourier_loop:contentReference[oaicite:1]{index=1};
+            # re-scale it to match the VAE latent distribution
+            x0 = x0 * mu_std + mu_mean
+    
+        # ---- 3) forward diffuse to a valid z_t_start ----
+        t_start = max(0, min(self.T-1, int(self.T * t_start_frac)))
+        alpha_t  = a(t_start)
+        sigma_t  = s(t_start)
+        eps0     = torch.randn_like(x0) if eta > 0 else torch.zeros_like(x0)
+        z = alpha_t * x0 + sigma_t * eps0   # EXACT formula used in training to make z_t:contentReference[oaicite:2]{index=2}
+    
+        # build the descending step list from t_start -> 0
+        steps = torch.arange(t_start, -1, -1, device=self.args.device)
+    
+        # ---- 4) reverse (DDIM) ----
+        for i, t_idx in enumerate(steps):
+            t_tensor = t_idx.view(1).to(self.args.device)  # [1]; your UNet expects (B,)
+            eps_hat  = self.unet(z, t_tensor)              # ε̂(z_t, t):contentReference[oaicite:3]{index=3}
+    
+            alpha_t  = a(t_idx)
+            sigma_t  = s(t_idx)
+            x0_hat   = (z - sigma_t * eps_hat) / alpha_t   # consistent x̂₀
+    
+            if i + 1 < steps.numel():
+                t_prev   = steps[i + 1]
+                alpha_p  = a(t_prev)
+                sigma_p  = s(t_prev)
+    
+                # DDIM step with optional stochasticity
+                if eta == 0.0:
+                    z = alpha_p * x0_hat + sigma_p * eps_hat
+                else:
+                    # stochastic term size chosen to keep variance correct across timesteps
+                    var = (sigma_p**2 - (alpha_p/alpha_t * sigma_t)**2).clamp_min(0.0)
+                    z = alpha_p * x0_hat + (var.sqrt()) * torch.randn_like(z) + (alpha_p/alpha_t * sigma_t) * eps_hat
+            else:
+                z = x0_hat  # final clean latent
+    
+        imgs = (self.vae.decode(z) + 1) / 2
         return imgs
 
 
-
-    @torch.no_grad()
-    def unet_real(self, predicted_encodings):
-        self.vae.eval()
-        self.unet.eval()
-        imgs = (self.vae.decode(predicted_encodings) + 1) / 2
-        return imgs
-    
-    
     
     # Interaction between vae and unet.
     def vae_vs_unet(
@@ -113,10 +168,11 @@ class SD:
             encoded = encoded[0].repeat(10, 1, 1, 1)
         z_t = alpha_t * encoded + sigma_t * epsilon
         predicted_epsilon = self.unet(z_t, t)
+        predicted_encodings = (z_t - sigma_t * predicted_epsilon) / alpha_t
         
-        predicted_encodings = z_t - predicted_epsilon
         with torch.no_grad():   
             self.vae.eval()
+            noisy_imgs = (self.vae.decode(z_t) + 1) / 2
             predicted_imgs = (self.vae.decode(predicted_encodings) + 1) / 2
             
         return {
@@ -127,7 +183,7 @@ class SD:
             "logvar" : logvar,
             "dkl" : dkl,
             "epsilon" : epsilon,
-            "z_t" : z_t,
+            "noisy_imgs" : noisy_imgs,
             "predicted_epsilon" : predicted_epsilon,
             "predicted_imgs" : predicted_imgs
             }
@@ -147,6 +203,9 @@ class SD:
         self.vae_opt.zero_grad(set_to_none=True)
         vae_loss.backward()
         self.vae_opt.step()
+        
+        self.plot_vals_dict["vae_loss"].append(vae_loss.detach().cpu())
+        self.plot_vals_dict["dkl_loss"].append(self.args.vae_beta * dkl.detach().cpu())
             
         for module in self.vae.modules():
             if isinstance(module, ConstrainedConv2d):
@@ -155,11 +214,12 @@ class SD:
         if self.epochs_for_vae % self.args.epochs_per_vid == 0:
             print("Saving VAE example...")
             with torch.no_grad():
-                decoded, predicted_imgs = operator.itemgetter(
-                    "decoded", "predicted_imgs")(
+                decoded, predicted_imgs, noisy_imgs = operator.itemgetter(
+                    "decoded", "noisy_imgs", "predicted_imgs")(
                         self.vae_vs_unet(new_batch = False, t = self.t))
             save_rel = file_location + f"/generated_images/{self.args.arg_name}/VAE_epoch_{self.epochs_for_vae}.png"
-            save_vae_comparison_grid(self.pokemon, decoded, predicted_imgs, save_rel)
+            save_vae_comparison_grid(self.pokemon, decoded, noisy_imgs, predicted_imgs, save_rel)
+            plot_vals(self.plot_vals_dict, file_location + f"/generated_images/{self.args.arg_name}")
         torch.cuda.empty_cache()
                 
         self.epochs_for_vae += 1
@@ -179,6 +239,9 @@ class SD:
         unet_loss.backward()
         self.unet_opt.step()
         
+        self.plot_vals_dict["unet_loss"].append(unet_loss.detach().cpu())
+
+        
         for module in self.unet.modules():
             if isinstance(module, ConstrainedConv2d):
                 module.clamp_weights()
@@ -187,17 +250,18 @@ class SD:
             print("Saving UNET examples...")
             with torch.no_grad():
                 imgs = self.unet_loop()
-            save_rel = f"/{self.args.arg_name}/UNET_epoch_{self.epochs_for_unet}"
+            save_rel = file_location + f"/generated_images/{self.args.arg_name}/UNET_epoch_{self.epochs_for_unet}"
             show_images_from_tensor(imgs, save_path=save_rel, fps=10)  
             
             with torch.no_grad():
                 _, encoded, _, _, _ = self.vae(self.pokemon, use_logvar=False)
                 
-                vae_imgs, predicted_imgs = operator.itemgetter(
-                    "decoded", "predicted_imgs")(
+                vae_imgs, noisy_imgs, predicted_imgs = operator.itemgetter(
+                    "decoded", "noisy_imgs", "predicted_imgs")(
                         self.vae_vs_unet(new_batch = False, t = self.t))
-            save_rel = file_location + f"/generated_images/{self.args.arg_name}/UNET_real_epoch_{self.epochs_for_unet}.png"
-            save_vae_comparison_grid(self.pokemon, vae_imgs, predicted_imgs, save_rel) 
+            save_rel = file_location + f"/generated_images/{self.args.arg_name}/UNET_epoch_{self.epochs_for_unet}/UNET_epoch_{self.epochs_for_unet}.png"
+            save_vae_comparison_grid(self.pokemon, vae_imgs, noisy_imgs, predicted_imgs, save_rel) 
+            plot_vals(self.plot_vals_dict, file_location + f"/generated_images/{self.args.arg_name}/UNET_epoch_{self.epochs_for_unet}")
         torch.cuda.empty_cache()
         
         self.epochs_for_unet += 1
@@ -214,6 +278,7 @@ class SD:
             if(epoch % 25 == 0):
                 percent_done = round(100 * self.epochs_for_vae / self.args.epochs_for_vae, 2)
                 print(f"{percent_done}%", end = "... ")
+                
                 
         print("\n\nTRAINING UNET:")
         for epoch in range(self.args.epochs_for_unet):

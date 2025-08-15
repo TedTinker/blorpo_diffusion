@@ -66,9 +66,9 @@ class UNET(nn.Module):
         print(f"UNET a:\t{example.shape}")
         
         self.time_mlp = nn.Sequential(
-            nn.Linear(128, 32), 
+            nn.Linear(128, 2 * self.args.latent_channels), 
             nn.LeakyReLU(),
-            nn.Linear(32, self.args.latent_channels))
+            nn.Linear(2 * self.args.latent_channels, 2 * self.args.latent_channels))
 
         self.apply(init_weights)
         self.to(self.args.device)
@@ -79,10 +79,15 @@ class UNET(nn.Module):
         ang = t.float()[:, None] * freqs[None]
         return torch.cat([torch.cos(ang), torch.sin(ang)], dim=1)  # [B, 128]
 
+
     def forward(self, latent, t):
-        epsilon = self.a(latent)      
-        emb = self.time_mlp(self.timestep_embed(t)).unsqueeze(-1).unsqueeze(-1) 
-        return epsilon + emb             
+        h = self.a(latent)                                 # [B,C,H,W]
+        emb = self.timestep_embed(t)                       # [B,128]
+        emb = self.time_mlp(emb)                           # [B,2C]
+        scale, shift = emb.chunk(2, dim=1)                 # [B,C], [B,C]
+        scale = (1 + scale).unsqueeze(-1).unsqueeze(-1)    # [B,C,1,1]
+        shift = shift.unsqueeze(-1).unsqueeze(-1)          # [B,C,1,1]
+        return h * scale + shift        
                      
 
 
