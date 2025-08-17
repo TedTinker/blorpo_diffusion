@@ -109,7 +109,7 @@ def get_stats(x, rgb, args):
         to_cat.append(wb)
                     
         batch_wb_mean = torch.mean(wb, dim=0, keepdim=True) # (1, channels, height, width)
-        batch_wb_mean_tiled = batch_wb_mean.repeat(args.batch_size, 1, 1, 1)
+        batch_wb_mean_tiled = batch_wb_mean.repeat(x.shape[0], 1, 1, 1)
         to_cat.append(batch_wb_mean_tiled)
     
     #sobel = sobel_edges(x)

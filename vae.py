@@ -12,7 +12,7 @@ from torch.profiler import profile, record_function, ProfilerActivity
 import torch.nn.functional as F
 
 from utils import default_args
-from utils_for_torch import init_weights, calculate_dkl, ConstrainedConv2d, var, sample, Multi_Kernel_Conv, add_position_layers, SpaceToDepth, DepthToSpace
+from utils_for_torch import init_weights, get_stats, rgb_to_circular_hsv, calculate_dkl, ConstrainedConv2d, var, sample, Multi_Kernel_Conv, add_position_layers, SpaceToDepth, DepthToSpace
 
 
 
@@ -24,11 +24,62 @@ class VAE(nn.Module):
         self.args = args
         
         # This is my kludgey way to see qualities that layers should have.
-        example = torch.zeros(self.args.batch_size, 3, self.args.image_size, self.args.image_size)
-        B = example.shape[0]
-        print(f"\nStart of VAE:\t{example.shape}")
-                     
+        example_rgb = torch.zeros(self.args.batch_size, 3, self.args.image_size, self.args.image_size)
+        example_rgb_stats = get_stats(example_rgb, rgb = True, args = self.args).cpu()
+        example_hsv = rgb_to_circular_hsv(example_rgb)
+        example_hsv_stats = get_stats(example_hsv, rgb = False, args = self.args).cpu()
+
+        print(f"\nStart of VAE (rgb):\t{example_rgb.shape}")
+        print(f"Start of VAE (rgb stats):\t{example_rgb_stats.shape}")
+        print(f"Start of VAE (hsv):\t{example_hsv.shape}")
+        print(f"Start of VAE (hsv stats):\t{example_hsv_stats.shape}")
         
+        self.rgb_in = nn.Sequential(
+            # 64 by 64
+            Multi_Kernel_Conv(
+                in_channels = example_rgb.shape[1], 
+                out_channels = [16, 8, 8], 
+                kernel_sizes = [3, 5, 7], 
+                args = self.args),
+            nn.GroupNorm(8, 32),
+            nn.LeakyReLU())
+        
+        self.rgb_stats_in = nn.Sequential(
+            # 64 by 64
+            Multi_Kernel_Conv(
+                in_channels = example_rgb_stats.shape[1], 
+                out_channels = [16, 8, 8], 
+                kernel_sizes = [3, 5, 7], 
+                args = self.args),
+            nn.GroupNorm(8, 32),
+            nn.LeakyReLU())
+        
+        self.hsv_in = nn.Sequential(
+            # 64 by 64
+            Multi_Kernel_Conv(
+                in_channels = example_hsv.shape[1], 
+                out_channels = [16, 8, 8], 
+                kernel_sizes = [3, 5, 7], 
+                args = self.args),
+            nn.GroupNorm(8, 32),
+            nn.LeakyReLU())
+        
+        self.hsv_stats_in = nn.Sequential(
+            # 64 by 64
+            Multi_Kernel_Conv(
+                in_channels = example_hsv_stats.shape[1], 
+                out_channels = [16, 8, 8], 
+                kernel_sizes = [3, 5, 7], 
+                args = self.args),
+            nn.GroupNorm(8, 32),
+            nn.LeakyReLU())
+        
+        example_rgb = self.rgb_in(example_rgb)
+        example_rgb_stats = self.rgb_stats_in(example_rgb_stats)
+        example_hsv = self.hsv_in(example_hsv)
+        example_hsv_stats = self.hsv_stats_in(example_hsv_stats)
+        example = torch.cat([example_rgb, example_rgb_stats, example_hsv, example_hsv_stats], dim = 1)     
+        print(f"VAE all together:\t{example.shape}")                
         
         self.encode = nn.Sequential(
             # 64 by 64
@@ -36,7 +87,7 @@ class VAE(nn.Module):
                 in_channels = example.shape[1], 
                 out_channels = [16, 8, 8], 
                 kernel_sizes = [3, 5, 7], 
-                pos_sizes = [[8, 16, 32, 64]] * 3,
+                pos_sizes = [[8, 16]] * 3,
                 args = self.args),
             SpaceToDepth(block_size=2),  
             nn.GroupNorm(8, 128),
@@ -87,7 +138,6 @@ class VAE(nn.Module):
                 kernel_size = 1),
             nn.Softplus())
         
-                        
         example_mu = self.mu(example)
         example_std = self.std(example)
         example = sample(example_mu, example_std)
@@ -128,14 +178,12 @@ class VAE(nn.Module):
                 in_channels = 32,
                 out_channels = [32], 
                 kernel_sizes = [1], 
-                pos_sizes = [[16]],
                 args = self.args),
             DepthToSpace(block_size = 2),
             Multi_Kernel_Conv(
                 in_channels = 8,
                 out_channels = [16, 16], 
                 kernel_sizes = [3, 5], 
-                pos_sizes = [[8]] * 2,
                 args = self.args),
             nn.GroupNorm(8, 32),
             nn.LeakyReLU(),
@@ -145,14 +193,12 @@ class VAE(nn.Module):
                 in_channels = 32,
                 out_channels = [32], 
                 kernel_sizes = [1], 
-                pos_sizes = [[16]],
                 args = self.args),
             DepthToSpace(block_size = 2),
             Multi_Kernel_Conv(
                 in_channels = 8,
                 out_channels = [16, 16], 
                 kernel_sizes = [3, 5], 
-                pos_sizes = [[8]] * 2,
                 args = self.args),
             nn.GroupNorm(8, 32),
             nn.LeakyReLU(),
@@ -162,7 +208,6 @@ class VAE(nn.Module):
                 in_channels = 32,
                 out_channels = [16, 8, 8], 
                 kernel_sizes = [3, 5, 7], 
-                pos_sizes = [[8]] * 3,
                 args = self.args),
             nn.GroupNorm(8, 32),
             nn.LeakyReLU(),
@@ -187,7 +232,18 @@ class VAE(nn.Module):
     
     
 
-    def forward(self, images, use_std = True):
+    def forward(self, images_rgb, use_std = True):
+        
+        images_rgb_stats = get_stats(images_rgb, rgb = True, args = self.args)
+        images_hsv = rgb_to_circular_hsv(images_rgb)
+        images_hsv_stats = get_stats(images_hsv, rgb = False, args = self.args)
+        
+        images_rgb = self.rgb_in(images_rgb)
+        images_rgb_stats = self.rgb_stats_in(images_rgb_stats)
+        images_hsv = self.hsv_in(images_hsv)
+        images_hsv_stats = self.hsv_stats_in(images_hsv_stats)
+        
+        images = torch.cat([images_rgb, images_rgb_stats, images_hsv, images_hsv_stats], dim = 1)  
         
         # Shrink.
         a = self.encode(images)

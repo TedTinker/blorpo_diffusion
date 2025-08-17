@@ -98,6 +98,7 @@ class SD:
             "encoded" : encoded,
             "decoded" : decoded,
             "dkl" : dkl,
+            "std" : std,
             "epsilon" : epsilon,
             "predicted_epsilon" : predicted_epsilon,
             "predicted_encoded" : predicted_encoded,
@@ -144,10 +145,11 @@ class SD:
     # Train UNET.
     def epoch_for_unet(self):
         
-        epsilon, predicted_epsilon = operator.itemgetter(
-            "epsilon", "predicted_epsilon")(
+        std, epsilon, predicted_epsilon = operator.itemgetter(
+            "std", "epsilon", "predicted_epsilon")(
                 self.vae_vs_unet(unet_train = True))
-        unet_loss = F.mse_loss(predicted_epsilon, epsilon)
+        target_epsilon = epsilon / std 
+        unet_loss = F.mse_loss(predicted_epsilon, target_epsilon)
     
         self.unet_opt.zero_grad(set_to_none=True)
         unet_loss.backward()
@@ -215,12 +217,13 @@ class SD:
         self.unet.eval()
         x = self.loop.clone()
         
-        current_noise = torch.tensor(float(self.current_noise)).to(self.args.device)
+        current_noise = torch.tensor(float(self.args.max_noise)).to(self.args.device)
     
         while current_noise > .1:
             std = current_noise.view(1, 1, 1, 1).repeat(x.size(0), x.size(1), x.size(2), x.size(3))
-            eps_hat = self.unet(x, std)
-            x = x - eps_hat  
+            eps_hat_unit = self.unet(x, std)
+            eps_hat = eps_hat_unit * std    
+            x = x - eps_hat
             current_noise *= .9
     
         imgs = (self.vae.decode(x) + 1) / 2
