@@ -12,7 +12,7 @@ from torch.profiler import profile, record_function, ProfilerActivity
 import torch.nn.functional as F
 
 from utils import default_args
-from utils_for_torch import init_weights, ConstrainedConv2d, var, sample, Multi_Kernel_Conv, add_position_layers, SpaceToDepth, DepthToSpace
+from utils_for_torch import init_weights, calculate_dkl, ConstrainedConv2d, var, sample, Multi_Kernel_Conv, add_position_layers, SpaceToDepth, DepthToSpace
 
 
 
@@ -36,9 +36,10 @@ class VAE(nn.Module):
                 in_channels = example.shape[1], 
                 out_channels = [16, 8, 8], 
                 kernel_sizes = [3, 5, 7], 
+                pos_sizes = [[8, 16, 32, 64]] * 3,
                 args = self.args),
             SpaceToDepth(block_size=2),  
-            nn.BatchNorm2d(128),
+            nn.GroupNorm(8, 128),
             nn.LeakyReLU(),
             # 32 by 32
             
@@ -48,7 +49,7 @@ class VAE(nn.Module):
                 kernel_sizes = [3, 5], 
                 args = self.args),
             SpaceToDepth(block_size=2),  
-            nn.BatchNorm2d(128),
+            nn.GroupNorm(8, 128),
             nn.LeakyReLU(),
             # 16 by 16
             
@@ -58,23 +59,39 @@ class VAE(nn.Module):
                 kernel_sizes = [3, 5], 
                 args = self.args),
             SpaceToDepth(block_size=2),  
-            nn.LeakyReLU())
+            nn.GroupNorm(8, 128),
+            nn.LeakyReLU(),
             # 8 by 8
+            
+            Multi_Kernel_Conv(
+                in_channels = 128,
+                out_channels = [32], 
+                kernel_sizes = [3], 
+                args = self.args),
+            nn.GroupNorm(8, 32),
+            nn.LeakyReLU())
             
         example = self.encode(example)
         print(f"VAE encode:\t{example.shape}")
             
         self.mu = nn.Sequential(
             nn.Conv2d(
-                in_channels = 128, 
+                in_channels = example.shape[1], 
                 out_channels = self.args.latent_channels,
                 kernel_size = 1))
         
-        self.logvar = nn.Conv2d(128, self.args.latent_channels, 1)
-                
+        self.std = nn.Sequential(
+            nn.Conv2d(
+                in_channels = example.shape[1], 
+                out_channels = self.args.latent_channels,
+                kernel_size = 1),
+            nn.Softplus())
+        
+                        
         example_mu = self.mu(example)
-        example_logvar = self.logvar(example)
-        example = self.reparam(example_mu, example_logvar)
+        example_std = self.std(example)
+        example = sample(example_mu, example_std)
+        
         print(f"VAE latent:\t{example.shape}")
 
         # Encoded! 
@@ -85,22 +102,25 @@ class VAE(nn.Module):
                 in_channels = self.args.latent_channels,
                 out_channels = [32], 
                 kernel_sizes = [3], 
+                pos_sizes = [[8]],
                 args = self.args),
-            nn.BatchNorm2d(32),
+            nn.GroupNorm(8, 32),
             nn.LeakyReLU(),
             
             Multi_Kernel_Conv(
                 in_channels = 32,
                 out_channels = [32], 
                 kernel_sizes = [1], 
+                pos_sizes = [[8]],
                 args = self.args),
             DepthToSpace(block_size = 2),
             Multi_Kernel_Conv(
                 in_channels = 8,
                 out_channels = [32], 
-                kernel_sizes = [3], 
+                kernel_sizes = [3],
+                pos_sizes = [[8]],
                 args = self.args),
-            nn.BatchNorm2d(32),
+            nn.GroupNorm(8, 32),
             nn.LeakyReLU(),
             # 16 by 16
             
@@ -108,14 +128,16 @@ class VAE(nn.Module):
                 in_channels = 32,
                 out_channels = [32], 
                 kernel_sizes = [1], 
+                pos_sizes = [[16]],
                 args = self.args),
             DepthToSpace(block_size = 2),
             Multi_Kernel_Conv(
                 in_channels = 8,
                 out_channels = [16, 16], 
                 kernel_sizes = [3, 5], 
+                pos_sizes = [[8]] * 2,
                 args = self.args),
-            nn.BatchNorm2d(32),
+            nn.GroupNorm(8, 32),
             nn.LeakyReLU(),
             # 32 by 32
             
@@ -123,14 +145,16 @@ class VAE(nn.Module):
                 in_channels = 32,
                 out_channels = [32], 
                 kernel_sizes = [1], 
+                pos_sizes = [[16]],
                 args = self.args),
             DepthToSpace(block_size = 2),
             Multi_Kernel_Conv(
                 in_channels = 8,
                 out_channels = [16, 16], 
                 kernel_sizes = [3, 5], 
+                pos_sizes = [[8]] * 2,
                 args = self.args),
-            nn.BatchNorm2d(32),
+            nn.GroupNorm(8, 32),
             nn.LeakyReLU(),
             # 64 by 64
             
@@ -138,8 +162,9 @@ class VAE(nn.Module):
                 in_channels = 32,
                 out_channels = [16, 8, 8], 
                 kernel_sizes = [3, 5, 7], 
+                pos_sizes = [[8]] * 3,
                 args = self.args),
-            nn.BatchNorm2d(32),
+            nn.GroupNorm(8, 32),
             nn.LeakyReLU(),
             nn.Conv2d(
                 in_channels = 32, 
@@ -162,26 +187,25 @@ class VAE(nn.Module):
     
     
 
-    def forward(self, images, use_logvar = True, clamp_logvar = False):
+    def forward(self, images, use_std = True):
         
         # Shrink.
         a = self.encode(images)
                     
         # Encode.
-        mu = self.mu(a)
-        logvar = self.logvar(a)
-        if(clamp_logvar):
-            logvar = torch.clamp(logvar, min = -10, max = 10)
-        if(use_logvar):
-            encoded = self.reparam(mu, logvar)
-        else:
-            encoded = mu
+        mu, std = var(a, self.mu, self.std, self.args)
+        if(use_std):    encoded = sample(mu, std)
+        else:           encoded = mu
             
         # Decode, grow.
         decoded = (self.decode(encoded) + 1) / 2
-        dkl = -0.5*(1 + logvar - mu**2 - torch.exp(logvar)).mean()
         
-        return decoded, encoded, mu, logvar, dkl
+        # Calculate DKL.
+        dkl_1 = calculate_dkl(mu, std, torch.zeros_like(mu), torch.ones_like(std)).mean()
+        dkl_2 = calculate_dkl(torch.zeros_like(mu), torch.ones_like(std), mu, std).mean()
+        dkl = (dkl_1 + dkl_2) / 2
+                
+        return decoded, encoded, dkl
 
 
 

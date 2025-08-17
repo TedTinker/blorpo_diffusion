@@ -13,11 +13,16 @@ from utils import default_args, args
 
 # For starting neural networks.
 def init_weights(m):
-    try:
+    if isinstance(m, (nn.Conv2d, nn.Linear)):
         nn.init.xavier_normal_(m.weight)
-        m.bias.data.fill_(0)
-    except: pass
-
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+    elif isinstance(m, (nn.GroupNorm, nn.BatchNorm2d, nn.LayerNorm, nn.InstanceNorm2d)):
+        if hasattr(m, 'weight') and m.weight is not None:
+            nn.init.ones_(m.weight)
+        if hasattr(m, 'bias') and m.bias is not None:
+            nn.init.zeros_(m.bias)
+            
 # How to use mean and standard deviation layers.
 def var(x, mu_func, std_func, args):
     mu = mu_func(x)
@@ -28,6 +33,16 @@ def var(x, mu_func, std_func, args):
 def sample(mu, std):
     e = Normal(0, 1).sample(std.shape).to(std.device)
     return(mu + e * std)
+
+def calculate_dkl(mu_1, std_1, mu_2, std_2):
+    std_1 = std_1**2
+    std_2 = std_2**2
+    term_1 = (mu_2 - mu_1)**2 / std_2 
+    term_2 = std_1 / std_2 
+    term_3 = torch.log(term_2)
+    out = (.5 * (term_1 + term_2 - term_3 - 1))
+    out = torch.nan_to_num(out)
+    return(out)
 
 
 
@@ -118,61 +133,29 @@ def rgb_to_circular_hsv(rgb):
 
 
 # For making smoothly transitioning seeds.
-def make_fourier_loop(
-    num_frames: int,
-    shape=(args.latent_channels, 8, 8),
-    num_frequencies: int = 4,
-    generator: torch.Generator | None = None,
-    device: torch.device | str | None = None,
-    dtype: torch.dtype = torch.float32,
-):
-    """
-    Returns a smooth, seamless loop of latent seeds with shape [num_frames, C, H, W].
-    """
-    C, H, W = shape
-    latent_dim = C * H * W
-    device = torch.device(device) if device is not None else torch.device("cpu")
-
-    # Use steps=num_frames+1 and drop last to avoid duplicate frame at 0 and 2π
-    t = torch.linspace(0.0, 2.0 * math.pi, steps=num_frames + 1, dtype=dtype)
-    t = t[:-1]  # [F]
-
-    # Build on CPU for portable Generator, then move to device
-    latent_path = torch.zeros(num_frames, latent_dim, dtype=dtype)
-    for k in range(1, num_frequencies + 1):
-        a_k = torch.randn(latent_dim, generator=generator, dtype=dtype) / k
-        b_k = torch.randn(latent_dim, generator=generator, dtype=dtype) / k
-        latent_path += torch.sin(k * t)[:, None] * a_k[None, :] + \
-                       torch.cos(k * t)[:, None] * b_k[None, :]
-
-    # Whiten across the loop so each latent dimension ~ N(0,1)
-    latent_path -= latent_path.mean(dim=0, keepdim=True)
-    latent_path /= (latent_path.std(dim=0, keepdim=True).clamp_min(1e-6))
-
-    # Reshape to latent grid and move to target device
-    latent_path = latent_path.view(num_frames, C, H, W).contiguous().to(device)
-    return latent_path
-
-def create_interpolated_tensor(args):
-    g = torch.Generator()              # CPU generator; reproducible across devices
-    g.manual_seed(int(args.init_seed))
-    return make_fourier_loop(
-        num_frames=args.seeds_used * args.seed_duration,
-        shape=(args.latent_channels, 8, 8),
-        num_frequencies=4,
-        generator=g,
-        device=args.device,
-        dtype=torch.float32,
-    )
-
-
-
-# Add position layers.
-def add_position_layers(x, learned_pos, scale = 1):
-    pos = learned_pos.repeat(x.shape[0], 1, 1, 1)
-    pos = F.interpolate(pos, scale_factor = scale, mode = "bilinear", align_corners = True)
-    x = torch.cat([x, pos], dim = 1)
-    return(x)
+def create_interpolated_tensor():    
+    rough_latent_path = [torch.randn((args.latent_channels, 8, 8)) for i in range(args.seeds_used)]
+    rough_latent_path.append(rough_latent_path[0])
+    latent_path = []
+    
+    def smooth(t1, t2):
+        smooth_path = []
+        for j in range(args.seed_duration):
+            p1 = 1 - (j / args.seed_duration) 
+            p2 = 1 - p1
+            smooth_path.append(t1 * p1 + t2 * p2)
+        return(smooth_path)
+    
+    for i in range(args.seeds_used):
+        t1 = rough_latent_path[i] 
+        latent_path.append(t1)
+        t2 = rough_latent_path[i+1]
+        smooth_path = smooth(t1, t2)
+        latent_path += smooth_path
+        
+    latent_path = [l.unsqueeze(0) for l in latent_path]
+    latent_path = torch.cat(latent_path, dim = 0).to(args.device)
+    return(latent_path)
 
 
 
@@ -206,7 +189,7 @@ class DepthToSpace(nn.Module):
     
     
 
-# CNN with capping.
+# CNN with capping (CC2d).
 class ConstrainedConv2d(nn.Conv2d):
     def forward(self, input):
         return nn.functional.conv2d(
@@ -215,39 +198,45 @@ class ConstrainedConv2d(nn.Conv2d):
 
     def clamp_weights(self):
         self.weight.data.clamp_(-1.0, 1.0)
-    
-    
-    
-# ResBlock. Return the input, plus something.
-class ResBlock(nn.Module):
-    def __init__(self, channels):
+        if self.bias is not None:
+            self.bias.data.clamp_(-1.0, 1.0)
+            
+            
+            
+# Add position layers.
+def add_position_layers(x, learned_pos, scale = 1):
+    pos = learned_pos.repeat(x.shape[0], 1, 1, 1)
+    pos = F.interpolate(pos, scale_factor = scale, mode = "bilinear", align_corners = True)
+    x = torch.cat([x, pos], dim = 1)
+    return(x)
+
+
+
+# Constrained CNN with positional layers 
+class ConvPos(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, padding, padding_mode, pos_sizes = []):
         super().__init__()
-        self.conv1 = ConstrainedConv2d(channels, channels, 3, padding=1)
-        self.act   = nn.SiLU()
-        self.conv2 = ConstrainedConv2d(channels, channels, 3, padding=1)
+        
+        self.positions = nn.ParameterList()
+        for pos_size in pos_sizes:
+            self.positions.append(nn.Parameter(torch.randn((1, in_channels, pos_size, pos_size))))
+                    
+        self.CC2d =  ConstrainedConv2d(
+            in_channels = in_channels * (len(pos_sizes) + 1), 
+            out_channels = out_channels,
+            kernel_size = kernel_size,
+            padding = padding,
+            padding_mode = "reflect")
 
     def forward(self, x):
-        out = self.conv1(x)
-        out = self.act(out)
-        out = self.conv2(out)
-        return out + x  
+        for pos_layer in self.positions:
+            scale = x.shape[-1] // pos_layer.shape[-1]
+            x = add_position_layers(x, pos_layer, scale = scale)
+        c = self.CC2d(x)
+        return c
 
-    
 
-# Attention layers.
-class AttnBlock(nn.Module):
-    def __init__(self, channels):
-        super().__init__()
-        self.attn = nn.MultiheadAttention(embed_dim=channels, num_heads=4)
 
-    def forward(self, x):
-        B, C, H, W = x.shape
-        # Flatten spatial dimensions so each pixel is a "token"
-        tokens = x.view(B, C, H*W).permute(2, 0, 1)  # [HW, B, C]
-        attn_out, _ = self.attn(tokens, tokens, tokens)
-        attn_out = attn_out.permute(1, 2, 0).view(B, C, H, W)
-        return attn_out + x  # skip connection
-    
     
     
 class SelfAttention(nn.Module):
@@ -295,6 +284,7 @@ class Multi_Kernel_Conv(nn.Module):
             in_channels = 16, 
             out_channels = [8, 8, 8, 8], 
             kernel_sizes = [3, 3, 3, 3], 
+            pos_sizes = [[], [], [], []],
             args = default_args):
         super(Multi_Kernel_Conv, self).__init__()
         
@@ -305,12 +295,13 @@ class Multi_Kernel_Conv(nn.Module):
             kernel_size = kernel_sizes[i]
             padding_size = ((kernel_size-1)//2, (kernel_size-1)//2)
             layer = nn.Sequential(
-                        ConstrainedConv2d(
-                            in_channels = in_channels, 
-                            out_channels = out_channels[i],
-                            kernel_size = kernel_size,
-                            padding = padding_size,
-                            padding_mode = "reflect"))
+                ConvPos(
+                    in_channels = in_channels, 
+                    out_channels = out_channels[i],
+                    kernel_size = kernel_size,
+                    padding = padding_size,
+                    padding_mode = "reflect",
+                    pos_sizes = pos_sizes[i]))
             self.CABs.append(layer)
                 
     def forward(self, x):

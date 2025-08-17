@@ -69,17 +69,24 @@ parser.add_argument("--device",                         type=str,       default 
                     help='Either cpu or cuda.') 
 
     # Easy options
-parser.add_argument("--epochs_for_vae",                 type=int,       default = 3000,
+parser.add_argument("--epochs_for_vae",                 type=int,       default = 5000,
                     help='How many epochs for training?') 
 parser.add_argument("--vae_lr",                         type=float,     default = .001,
                     help='Learning rate for generator.') 
-parser.add_argument("--vae_beta",                        type=float,    default = .05,
+parser.add_argument("--vae_beta",                        type=float,    default = .01,
                     help='Learning rate for discriminator')  
 
 parser.add_argument("--epochs_for_unet",                type=int,       default = 500000,
                     help='How many epochs for training?') 
 parser.add_argument("--unet_lr",                        type=float,     default = .001,
-                    help='Learning rate for discriminator')  
+                    help='Learning rate for discriminator.')  
+parser.add_argument("--min_noise",                      type=float,     default = .1,
+                    help='Learning rate for discriminator.')  
+parser.add_argument("--max_noise",                      type=float,     default = 5,
+                    help='Learning rate for discriminator.')  
+parser.add_argument("--change_rate",                    type=float,     default = .001,
+                    help='Learning rate for discriminator.')  
+
 
 parser.add_argument("--batch_size",                     type=int,       default = 64,
                     help='How large are the batches used in epochs?') 
@@ -105,9 +112,9 @@ parser.add_argument("--use_hsv",                        type=bool,     default =
     # Presentation options
 parser.add_argument("--epochs_per_vid",                 type=int,       default = 250,
                     help='How often are pictures and videos saved?') 
-parser.add_argument("--seeds_used",                     type=int,       default = 5,
+parser.add_argument("--seeds_used",                     type=int,       default = 10,
                     help='When making pictures and videos, how many seeds?') 
-parser.add_argument("--seed_duration",                  type=int,       default = 5,
+parser.add_argument("--seed_duration",                  type=int,       default = 10,
                     help='When making pictures and videos, how many steps transationing from one to another?') 
 
 
