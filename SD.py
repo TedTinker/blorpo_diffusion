@@ -7,6 +7,7 @@ from collections import Counter
 import datetime
 import numpy as np
 import operator
+import pickle
 
 import torch 
 from torch.optim import Adam
@@ -36,6 +37,11 @@ class SD:
         self.session_start_time = datetime.datetime.now()
         
         self.vae = VAE()
+        try:
+            self.vae.load_state_dict(torch.load(self.gen_location + "/vae.py", weights_only=True))
+            self.args.epochs_for_vae = 0
+        except:
+            pass
         self.vae_opt = Adam(self.vae.parameters(), args.vae_lr)
         self.vae.train()
         
@@ -53,6 +59,13 @@ class SD:
                 
         std = [i * self.args.max_noise / 10 for i in range(10)]
         self.std = torch.tensor(std).to(self.args.device)
+        
+        
+        
+    def save_vae(self):
+        torch.save(self.vae.state_dict(), self.gen_location + "/vae.py")
+
+
 
 
     
@@ -70,7 +83,7 @@ class SD:
         if(new_batch):  real_imgs = get_random_batch(batch_size=self.args.batch_size)
         else:           real_imgs = self.pokemon
             
-        if(unet_train):
+        if(unet_train or not new_batch):
             with torch.no_grad():                          
                 decoded, encoded, dkl = self.vae(real_imgs, use_std=False)
         else:
@@ -78,15 +91,17 @@ class SD:
             
         if(new_batch):  
             std = torch.rand(size=(encoded.size(0),), device=self.args.device) * self.current_noise
+            std = std.clamp_(self.args.min_noise, self.args.max_noise)
         else:           
             std = self.std
             encoded = encoded[0].repeat(10, 1, 1, 1)
         
         std = std.view((std.shape[0], 1, 1, 1)).repeat(1, encoded.shape[1], encoded.shape[2], encoded.shape[3])
-        epsilon = std * Normal(0, 1).sample(std.shape).to(std.device)    
-        noisy_encoded = encoded + epsilon
+        epsilon = Normal(0, 1).sample(std.shape).to(std.device)    
+        noisy_encoded = encoded + std * epsilon
+        
         predicted_epsilon = self.unet(noisy_encoded, std)
-        predicted_encoded = noisy_encoded - predicted_epsilon
+        predicted_encoded = noisy_encoded - predicted_epsilon * std
         
         with torch.no_grad():   
             self.vae.eval()
@@ -145,11 +160,10 @@ class SD:
     # Train UNET.
     def epoch_for_unet(self):
         
-        std, epsilon, predicted_epsilon = operator.itemgetter(
-            "std", "epsilon", "predicted_epsilon")(
+        epsilon, predicted_epsilon = operator.itemgetter(
+            "epsilon", "predicted_epsilon")(
                 self.vae_vs_unet(unet_train = True))
-        target_epsilon = epsilon / std 
-        unet_loss = F.mse_loss(predicted_epsilon, target_epsilon)
+        unet_loss = F.mse_loss(predicted_epsilon, epsilon)
     
         self.unet_opt.zero_grad(set_to_none=True)
         unet_loss.backward()
@@ -162,7 +176,7 @@ class SD:
         #        module.clamp_weights()
     
         if self.epochs_for_unet % self.args.epochs_per_vid == 0:
-            print("Saving UNET examples...")
+            print(f"Saving UNET examples... (Current Noise: {round(self.current_noise, 2)})")
             self.save_examples(
                 grid_save_pos = self.gen_location + f"/UNET_epoch_{self.epochs_for_unet}/UNET_epoch_{self.epochs_for_unet}.png",
                 val_save_pos = self.gen_location + f"/UNET_epoch_{self.epochs_for_unet}")
@@ -189,6 +203,8 @@ class SD:
             if(epoch % 25 == 0):
                 percent_done = round(100 * self.epochs_for_vae / self.args.epochs_for_vae, 2)
                 print(f"{percent_done}%", end = "... ")
+                
+        self.save_vae()
                 
                 
         print("\n\nTRAINING UNET:")

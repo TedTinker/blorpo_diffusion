@@ -87,7 +87,7 @@ class VAE(nn.Module):
                 in_channels = example.shape[1], 
                 out_channels = [16, 8, 8], 
                 kernel_sizes = [3, 5, 7], 
-                pos_sizes = [[8, 16]] * 3,
+                pos_sizes = [[8]] * 3,
                 args = self.args),
             SpaceToDepth(block_size=2),  
             nn.GroupNorm(8, 128),
@@ -103,16 +103,6 @@ class VAE(nn.Module):
             nn.GroupNorm(8, 128),
             nn.LeakyReLU(),
             # 16 by 16
-            
-            Multi_Kernel_Conv(
-                in_channels = 128,
-                out_channels = [16, 16], 
-                kernel_sizes = [3, 5], 
-                args = self.args),
-            SpaceToDepth(block_size=2),  
-            nn.GroupNorm(8, 128),
-            nn.LeakyReLU(),
-            # 8 by 8
             
             Multi_Kernel_Conv(
                 in_channels = 128,
@@ -147,7 +137,7 @@ class VAE(nn.Module):
         # Encoded! 
         
         self.decode = nn.Sequential(
-            # 8 by 8
+            # 16 by 16
             Multi_Kernel_Conv(
                 in_channels = self.args.latent_channels,
                 out_channels = [32], 
@@ -156,23 +146,6 @@ class VAE(nn.Module):
                 args = self.args),
             nn.GroupNorm(8, 32),
             nn.LeakyReLU(),
-            
-            Multi_Kernel_Conv(
-                in_channels = 32,
-                out_channels = [32], 
-                kernel_sizes = [1], 
-                pos_sizes = [[8]],
-                args = self.args),
-            DepthToSpace(block_size = 2),
-            Multi_Kernel_Conv(
-                in_channels = 8,
-                out_channels = [32], 
-                kernel_sizes = [3],
-                pos_sizes = [[8]],
-                args = self.args),
-            nn.GroupNorm(8, 32),
-            nn.LeakyReLU(),
-            # 16 by 16
             
             Multi_Kernel_Conv(
                 in_channels = 32,

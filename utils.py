@@ -69,7 +69,7 @@ parser.add_argument("--device",                         type=str,       default 
                     help='Either cpu or cuda.') 
 
     # Easy options
-parser.add_argument("--epochs_for_vae",                 type=int,       default = 10000,
+parser.add_argument("--epochs_for_vae",                 type=int,       default = 5000,
                     help='How many epochs for training?') 
 parser.add_argument("--vae_lr",                         type=float,     default = .001,
                     help='Learning rate for generator.') 
@@ -80,7 +80,7 @@ parser.add_argument("--epochs_for_unet",                type=int,       default 
                     help='How many epochs for training?') 
 parser.add_argument("--unet_lr",                        type=float,     default = .001,
                     help='Learning rate for discriminator.')  
-parser.add_argument("--min_noise",                      type=float,     default = .1,
+parser.add_argument("--min_noise",                      type=float,     default = .3,
                     help='Learning rate for discriminator.')  
 parser.add_argument("--max_noise",                      type=float,     default = 5,
                     help='Learning rate for discriminator.')  
@@ -337,6 +337,9 @@ def plot_vals(plot_vals_dict, save_path='losses.png', fontsize=7):
     plt.xlabel("Epochs")
     plt.ylabel("VAE Loss")
     #plt.ylim(-1, 25)
+    ymin, ymax = plt.ylim()   # get current y-axis range
+    yticks = np.arange(np.floor(ymin*10)/10, np.ceil(ymax*10)/10 + 0.1, 0.1)
+    plt.yticks(yticks)
     plt.title("VAE Losses")
     plt.legend(fontsize=fontsize)
     plt.grid(True)
@@ -346,6 +349,9 @@ def plot_vals(plot_vals_dict, save_path='losses.png', fontsize=7):
     plt.xlabel("UNET Epochs")
     plt.ylabel("UNET Loss")
     #plt.ylim(-1, 25)
+    ymin, ymax = plt.ylim()   # get current y-axis range
+    yticks = np.arange(np.floor(ymin*10)/10, np.ceil(ymax*10)/10 + 0.1, 0.1)
+    plt.yticks(yticks)
     plt.title("UNET Losses")
     plt.legend(fontsize=fontsize)
     plt.grid(True)
