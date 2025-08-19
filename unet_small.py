@@ -32,7 +32,7 @@ class UNET(nn.Module):
 
         print(f"\nStart of UNET:\t{example.shape, example_std.shape}")
                 
-        self.a = nn.Sequential(
+        self.latent = nn.Sequential(
             Multi_Kernel_Conv(
                 in_channels = example.shape[1], 
                 out_channels = [16, 16], 
@@ -40,9 +40,26 @@ class UNET(nn.Module):
                 pos_sizes = [[8]] * 2,
                 args = self.args),
             nn.GroupNorm(8, 32),
-            nn.LeakyReLU(),
+            nn.LeakyReLU())
+        
+        self.std = nn.Sequential(
             Multi_Kernel_Conv(
-                in_channels = 32,
+                in_channels = example_std.shape[1], 
+                out_channels = [16, 16], 
+                kernel_sizes = [1, 3], 
+                pos_sizes = [[8]] * 2,
+                args = self.args),
+            nn.GroupNorm(8, 32),
+            nn.LeakyReLU())
+        
+        example = self.latent(example)
+        example_std = self.std(example_std)
+        example = torch.cat([example, example_std], dim = 1)
+        print(f"UNET first:\t{example.shape}")
+        
+        self.a = nn.Sequential(
+            Multi_Kernel_Conv(
+                in_channels = example.shape[1],
                 out_channels = [16, 16], 
                 kernel_sizes = [1, 3], 
                 pos_sizes = [[8]] * 2,
@@ -51,19 +68,11 @@ class UNET(nn.Module):
             nn.LeakyReLU())
         
         example = self.a(example)
-        print(f"UNET a:\t{example.shape}")
+        example_step = example
         
         self.b = nn.Sequential(
             Multi_Kernel_Conv(
-                in_channels = example_std.shape[1], 
-                out_channels = [16, 16], 
-                kernel_sizes = [1, 3], 
-                pos_sizes = [[8]] * 2,
-                args = self.args),
-            nn.GroupNorm(8, 32),
-            nn.LeakyReLU(),
-            Multi_Kernel_Conv(
-                in_channels = 32,
+                in_channels = 32, 
                 out_channels = [16, 16], 
                 kernel_sizes = [1, 3], 
                 pos_sizes = [[8]] * 2,
@@ -71,29 +80,13 @@ class UNET(nn.Module):
             nn.GroupNorm(8, 32),
             nn.LeakyReLU())
         
-        example_std = self.b(example_std)
-        print(f"UNET b:\t{example_std.shape}")
-        
-        example = torch.cat([example, example_std], dim = 1)
-        print(f"UNET w/ std:\t{example.shape}")
+        example = self.b(example)
+        example += example_step
+        print(f"UNET b:\t{example.shape}")
         
         self.c = nn.Sequential(
             Multi_Kernel_Conv(
-                in_channels = example.shape[1],
-                out_channels = [16, 16], 
-                kernel_sizes = [1, 3], 
-                pos_sizes = [[8]] * 2,
-                args = self.args),
-            nn.GroupNorm(8, 32),
-            nn.LeakyReLU(),
-            Multi_Kernel_Conv(
-                in_channels = 32, 
-                out_channels = [16, 16], 
-                kernel_sizes = [1, 3], 
-                pos_sizes = [[8]] * 2,
-                args = self.args),
-            Multi_Kernel_Conv(
-                in_channels = 32, 
+                in_channels = example.shape[1], 
                 out_channels = [16, 16], 
                 kernel_sizes = [1, 3], 
                 pos_sizes = [[8]] * 2,
@@ -109,10 +102,12 @@ class UNET(nn.Module):
         self.to(self.args.device)
 
     def forward(self, latent, std):
-        a = self.a(latent)   
-        b = self.b(std)      
-        ab = torch.cat([a, b], dim = 1)     
-        c = self.c(ab)                 
+        latent = self.latent(latent)
+        std = self.std(std)
+        x = torch.cat([latent, std], dim = 1)
+        a = self.a(x)   
+        b = self.b(a)     
+        c = self.c(a + b)                 
         return c
                      
 
