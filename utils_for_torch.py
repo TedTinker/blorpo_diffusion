@@ -134,7 +134,7 @@ def rgb_to_circular_hsv(rgb):
 
 # For making smoothly transitioning seeds.
 def create_interpolated_tensor():    
-    rough_latent_path = [torch.randn((args.latent_channels, 16, 16)) for i in range(args.seeds_used)]
+    rough_latent_path = [torch.rand((3, 64, 64)) for i in range(args.seeds_used)]
     rough_latent_path.append(rough_latent_path[0])
     latent_path = []
     

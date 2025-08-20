@@ -65,6 +65,7 @@ class UNET(nn.Module):
                 kernel_sizes = [3, 5, 7], 
                 pos_sizes = [[8]] * 3,
                 args = self.args),
+            nn.GroupNorm(8, 64),
             nn.LeakyReLU(),
             Multi_Kernel_Conv(
                 in_channels = example.shape[1],
@@ -72,6 +73,7 @@ class UNET(nn.Module):
                 kernel_sizes = [3, 5, 7], 
                 pos_sizes = [[8]] * 3,
                 args = self.args),
+            nn.GroupNorm(8, 64),
             nn.LeakyReLU())
         
         example = self.a(example)
@@ -85,6 +87,7 @@ class UNET(nn.Module):
                 kernel_sizes = [3, 5, 7], 
                 pos_sizes = [[8]] * 3,
                 args = self.args),
+            nn.GroupNorm(8, 64),
             nn.LeakyReLU(),
             Multi_Kernel_Conv(
                 in_channels = example.shape[1], 
@@ -92,6 +95,7 @@ class UNET(nn.Module):
                 kernel_sizes = [3, 5, 7], 
                 pos_sizes = [[8]] * 3,
                 args = self.args),
+            nn.GroupNorm(8, 64),
             nn.LeakyReLU())
         
         example = self.b(example)
@@ -106,6 +110,7 @@ class UNET(nn.Module):
                 kernel_sizes = [3, 5, 7], 
                 pos_sizes = [[8]] * 3,
                 args = self.args),
+            nn.GroupNorm(8, 64),
             nn.LeakyReLU(),
             Multi_Kernel_Conv(
                 in_channels = example.shape[1], 
@@ -113,6 +118,7 @@ class UNET(nn.Module):
                 kernel_sizes = [3, 5, 7], 
                 pos_sizes = [[8]] * 3,
                 args = self.args),
+            nn.GroupNorm(8, 64),
             nn.LeakyReLU())
         
         example = self.c(example)
@@ -127,6 +133,7 @@ class UNET(nn.Module):
                 kernel_sizes = [3, 5, 7], 
                 pos_sizes = [[8]] * 3,
                 args = self.args),
+            nn.GroupNorm(8, 64),
             nn.LeakyReLU(),
             Multi_Kernel_Conv(
                 in_channels = example.shape[1], 
@@ -134,6 +141,7 @@ class UNET(nn.Module):
                 kernel_sizes = [3, 5, 7], 
                 pos_sizes = [[8]] * 3,
                 args = self.args),
+            nn.GroupNorm(8, 64),
             nn.LeakyReLU())
         
         example = self.d(example)
@@ -147,6 +155,7 @@ class UNET(nn.Module):
                 kernel_sizes = [3, 5, 7], 
                 pos_sizes = [[8]] * 3,
                 args = self.args),
+            nn.GroupNorm(8, 64),
             nn.LeakyReLU(),
             Multi_Kernel_Conv(
                 in_channels = example.shape[1], 
@@ -154,6 +163,7 @@ class UNET(nn.Module):
                 kernel_sizes = [3, 5, 7], 
                 pos_sizes = [[8]] * 3,
                 args = self.args),
+            nn.GroupNorm(8, 64),
             nn.LeakyReLU())
         
         example = self.e(example)
@@ -167,6 +177,7 @@ class UNET(nn.Module):
                 kernel_sizes = [3, 5, 7], 
                 pos_sizes = [[8]] * 3,
                 args = self.args),
+            nn.GroupNorm(8, 64),
             nn.LeakyReLU())
         
         example = self.f(example)
