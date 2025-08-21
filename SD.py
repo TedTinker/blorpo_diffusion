@@ -180,7 +180,7 @@ class SD:
             self.save_examples(
                 grid_save_pos = self.gen_location + f"/UNET_epoch_{self.epochs_for_unet}/UNET_epoch_{self.epochs_for_unet}.png",
                 val_save_pos = self.gen_location + f"/UNET_epoch_{self.epochs_for_unet}")
-            for rate in [.4, .5, .6]:
+            for rate in [.2, .3, .4]:
                 imgs = self.unet_loop(rate)
                 save_rel = file_location + f"/generated_images/{self.args.arg_name}/UNET_epoch_{self.epochs_for_unet}/{rate}"
                 show_images_from_tensor(imgs, save_path=save_rel, fps=10)  
@@ -217,7 +217,6 @@ class SD:
                 
                 
 
-        
     def save_examples(self, grid_save_pos, val_save_pos):
         with torch.no_grad():
             decoded, noisy_imgs, predicted_imgs = operator.itemgetter(
@@ -237,14 +236,17 @@ class SD:
         current_noise = torch.tensor(float(self.args.max_noise)).to(self.args.device)
 
         while current_noise > .1:
-            _, encoded, _ = self.vae(img, use_std = False)
+            _, encoded, _ = self.vae(img, use_std = False)     # Is it better to NOT re-encode each time?
             std = current_noise.view(1,1,1,1).expand_as(encoded)
             epsilon = Normal(0, 1).sample(std.shape).to(std.device)    
             noisy_encoded = encoded + std * epsilon
             eps_hat = self.unet(noisy_encoded, std) * std    
-            encoded = encoded - eps_hat
+            encoded = noisy_encoded - eps_hat
             img = (self.vae.decode(encoded) + 1) / 2
             current_noise *= rate
+            
+        #_, encoded, _ = vae(img, use_std=False)  # Could it help to re-encode?
+        #img = (vae.decode(encoded) + 1) / 2
             
         return img
 
