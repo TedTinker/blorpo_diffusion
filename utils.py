@@ -69,7 +69,7 @@ parser.add_argument("--device",                         type=str,       default 
                     help='Either cpu or cuda.') 
 
     # Easy options
-parser.add_argument("--epochs_for_vae",                 type=int,       default = 5000,
+parser.add_argument("--epochs_for_vae",                 type=int,       default = 10000,
                     help='How many epochs for training?') 
 parser.add_argument("--vae_lr",                         type=float,     default = .001,
                     help='Learning rate for generator.') 

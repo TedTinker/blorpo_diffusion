@@ -15,7 +15,7 @@ import torch.nn.functional as F
 
 from utils import default_args
 from utils_for_torch import init_weights, ConstrainedConv2d, var, sample, Multi_Kernel_Conv, add_position_layers, \
-    SpaceToDepth, DepthToSpace
+    SpaceToDepth, DepthToSpace, SelfAttention
 
 
 
@@ -67,6 +67,9 @@ class UNET(nn.Module):
                 args = self.args),
             nn.GroupNorm(8, 64),
             nn.LeakyReLU(),
+            SelfAttention(
+                in_channels = 64, 
+                kernel_size = 1),
             Multi_Kernel_Conv(
                 in_channels = example.shape[1],
                 out_channels = [16, 32, 16], 
@@ -89,6 +92,9 @@ class UNET(nn.Module):
                 args = self.args),
             nn.GroupNorm(8, 64),
             nn.LeakyReLU(),
+            SelfAttention(
+                in_channels = 64, 
+                kernel_size = 1),
             Multi_Kernel_Conv(
                 in_channels = example.shape[1], 
                 out_channels = [16, 32, 16], 

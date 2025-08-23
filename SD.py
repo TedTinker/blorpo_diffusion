@@ -46,6 +46,11 @@ class SD:
         self.vae.train()
         
         self.unet = UNET()
+        try:
+            self.unet.load_state_dict(torch.load(self.gen_location + "/unet.py", weights_only=True))
+            self.args.epochs_for_unet = 0
+        except:
+            pass
         self.unet_opt = Adam(self.unet.parameters(), args.unet_lr, weight_decay=.0001)
         self.unet.train()
         
@@ -64,6 +69,9 @@ class SD:
         
     def save_vae(self):
         torch.save(self.vae.state_dict(), self.gen_location + "/vae.py")
+        
+    def save_unet(self):
+        torch.save(self.unet.state_dict(), self.gen_location + "/unet.py")
 
 
 
@@ -180,10 +188,12 @@ class SD:
             self.save_examples(
                 grid_save_pos = self.gen_location + f"/UNET_epoch_{self.epochs_for_unet}/UNET_epoch_{self.epochs_for_unet}.png",
                 val_save_pos = self.gen_location + f"/UNET_epoch_{self.epochs_for_unet}")
-            for rate in [.2, .3, .4]:
+            for rate in [
+                    [(0, 0)] * 10]:
                 imgs = self.unet_loop(rate)
                 save_rel = file_location + f"/generated_images/{self.args.arg_name}/UNET_epoch_{self.epochs_for_unet}/{rate}"
-                show_images_from_tensor(imgs, save_path=save_rel, fps=10)  
+                show_images_from_tensor(imgs, save_path=save_rel, fps=10) 
+            self.save_unet()
         torch.cuda.empty_cache()
         
         if(self.current_noise < self.args.max_noise):
@@ -207,13 +217,23 @@ class SD:
                 
         self.save_vae()
                 
-                
         print("\n\nTRAINING UNET:")
         for epoch in range(self.args.epochs_for_unet):
             self.epoch_for_unet()
             if(epoch % 25 == 0):
                 percent_done = round(100 * self.epochs_for_unet / self.args.epochs_for_unet, 2)
                 print(f"{percent_done}%", end = "... ")
+                
+        self.save_unet()
+                
+        
+        
+        for r, rate in enumerate([
+                [99999999] * 1 + [1, .75, .5, .25]]):
+            print(f"{r}, {rate}")
+            imgs = self.unet_loop(rate)
+            save_rel = file_location + f"/generated_images/{self.args.arg_name}/{r}"
+            show_images_from_tensor(imgs, save_path=save_rel, fps=10)  
                 
                 
 
@@ -228,6 +248,27 @@ class SD:
     
     
     @torch.no_grad()
+    def unet_loop(self, noise_list):
+        self.vae.eval() 
+        self.unet.eval()
+        img = self.loop.clone()
+        
+        current_noise_list = [(torch.tensor(float(n)).to(self.args.device)) for n in noise_list]
+
+        for noise in current_noise_list:
+            _, encoded, _ = self.vae(img)     # Is it better to NOT re-encode each time?
+            std = noise.view(1,1,1,1).expand_as(encoded)
+            epsilon = Normal(0, 1).sample(std.shape).to(std.device)    
+            noisy_encoded = encoded + std * epsilon
+            eps_hat = self.unet(noisy_encoded, std) * std    
+            encoded = noisy_encoded - eps_hat
+            img = (self.vae.decode(encoded) + 1) / 2
+            
+        return img
+    
+    
+    
+    """@torch.no_grad()
     def unet_loop(self, rate):
         self.vae.eval() 
         self.unet.eval()
@@ -236,7 +277,8 @@ class SD:
         current_noise = torch.tensor(float(self.args.max_noise)).to(self.args.device)
 
         while current_noise > .1:
-            _, encoded, _ = self.vae(img, use_std = False)     # Is it better to NOT re-encode each time?
+            print(current_noise.item())
+            _, encoded, _ = self.vae(img)
             std = current_noise.view(1,1,1,1).expand_as(encoded)
             epsilon = Normal(0, 1).sample(std.shape).to(std.device)    
             noisy_encoded = encoded + std * epsilon
@@ -245,10 +287,9 @@ class SD:
             img = (self.vae.decode(encoded) + 1) / 2
             current_noise *= rate
             
-        #_, encoded, _ = vae(img, use_std=False)  # Could it help to re-encode?
-        #img = (vae.decode(encoded) + 1) / 2
-            
-        return img
+        return img"""
+    
+    
 
             
         

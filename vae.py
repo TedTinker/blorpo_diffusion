@@ -12,7 +12,7 @@ from torch.profiler import profile, record_function, ProfilerActivity
 import torch.nn.functional as F
 
 from utils import default_args
-from utils_for_torch import init_weights, get_stats, rgb_to_circular_hsv, calculate_dkl, ConstrainedConv2d, var, sample, Multi_Kernel_Conv, add_position_layers, SpaceToDepth, DepthToSpace
+from utils_for_torch import init_weights, SelfAttention, get_stats, rgb_to_circular_hsv, calculate_dkl, ConstrainedConv2d, var, sample, Multi_Kernel_Conv, add_position_layers, SpaceToDepth, DepthToSpace
 
 
 
@@ -87,7 +87,7 @@ class VAE(nn.Module):
                 in_channels = example.shape[1], 
                 out_channels = [16, 8, 8], 
                 kernel_sizes = [3, 5, 7], 
-                pos_sizes = [[8]] * 3,
+                pos_sizes = [[8, 16]] * 3,
                 args = self.args),
             SpaceToDepth(block_size=2),  
             nn.GroupNorm(8, 128),
@@ -102,6 +102,9 @@ class VAE(nn.Module):
             SpaceToDepth(block_size=2),  
             nn.GroupNorm(8, 128),
             nn.LeakyReLU(),
+            SelfAttention(
+                in_channels = 128, 
+                kernel_size = 3),
             # 16 by 16
             
             Multi_Kernel_Conv(
@@ -146,7 +149,7 @@ class VAE(nn.Module):
                 args = self.args),
             nn.GroupNorm(8, 32),
             nn.LeakyReLU(),
-            
+                        
             Multi_Kernel_Conv(
                 in_channels = 32,
                 out_channels = [32], 
@@ -160,6 +163,9 @@ class VAE(nn.Module):
                 args = self.args),
             nn.GroupNorm(8, 32),
             nn.LeakyReLU(),
+            SelfAttention(
+                in_channels = 32, 
+                kernel_size = 3),
             # 32 by 32
             
             Multi_Kernel_Conv(
