@@ -188,8 +188,8 @@ class SD:
             self.save_examples(
                 grid_save_pos = self.gen_location + f"/UNET_epoch_{self.epochs_for_unet}/UNET_epoch_{self.epochs_for_unet}.png",
                 val_save_pos = self.gen_location + f"/UNET_epoch_{self.epochs_for_unet}")
-            for rate in [
-                    [(0, 0)] * 10]:
+            for r, rate in enumerate([
+                    [99999999] * 1 + [1, .75, .5, .25]]):
                 imgs = self.unet_loop(rate)
                 save_rel = file_location + f"/generated_images/{self.args.arg_name}/UNET_epoch_{self.epochs_for_unet}/{rate}"
                 show_images_from_tensor(imgs, save_path=save_rel, fps=10) 
@@ -265,34 +265,8 @@ class SD:
             img = (self.vae.decode(encoded) + 1) / 2
             
         return img
-    
-    
-    
-    """@torch.no_grad()
-    def unet_loop(self, rate):
-        self.vae.eval() 
-        self.unet.eval()
-        img = self.loop.clone()
         
-        current_noise = torch.tensor(float(self.args.max_noise)).to(self.args.device)
-
-        while current_noise > .1:
-            print(current_noise.item())
-            _, encoded, _ = self.vae(img)
-            std = current_noise.view(1,1,1,1).expand_as(encoded)
-            epsilon = Normal(0, 1).sample(std.shape).to(std.device)    
-            noisy_encoded = encoded + std * epsilon
-            eps_hat = self.unet(noisy_encoded, std) * std    
-            encoded = noisy_encoded - eps_hat
-            img = (self.vae.decode(encoded) + 1) / 2
-            current_noise *= rate
-            
-        return img"""
     
-    
-
-            
-        
         
 # :D
 if(__name__ == "__main__"):
