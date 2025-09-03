@@ -69,13 +69,13 @@ parser.add_argument("--device",                         type=str,       default 
                     help='Either cpu or cuda.') 
 
     # Easy options
-parser.add_argument("--epochs_for_vae",                 type=int,       default = 10000,
+parser.add_argument("--epochs_for_vae",                 type=int,       default = 20000,
                     help='How many epochs for training?') 
 parser.add_argument("--vae_lr",                         type=float,     default = .001,
                     help='Learning rate for generator.') 
-parser.add_argument("--vae_dropout",                        type=int,       default = .0,
+parser.add_argument("--vae_dropout",                    type=int,       default = .0,
                     help='How much dropout for the discriminator?') 
-parser.add_argument("--vae_beta",                        type=float,    default = .1, #.03,
+parser.add_argument("--vae_beta",                       type=float,    default = .05,
                     help='Learning rate for discriminator')  
 
 parser.add_argument("--epochs_for_unet",                type=int,       default = 500000,
@@ -118,9 +118,9 @@ parser.add_argument("--seeds_used",                     type=int,       default 
 parser.add_argument("--seed_duration",                  type=int,       default = 10,
                     help='When making pictures and videos, how many steps transationing from one to another?') 
 
-parser.add_argument("--actual_noise_list",              type=list,       default = [999,    2,  1,  .5],
+parser.add_argument("--actual_noise_list",              type=list,       default = [999,    2.5,    2,      1.5,    1,      .75,    .5,     .25],
                     help='When making pictures and videos, how many steps transationing from one to another?') 
-parser.add_argument("--lied_noise_list",                type=list,       default = [7,      1.75, .75,     .1],
+parser.add_argument("--lied_noise_list",                type=list,       default = [7,      2.25,   1.75,   1.25,   .5,     .5,     .25,    .1],
                     help='When making pictures and videos, how many steps transationing from one to another?') 
 
 

@@ -65,7 +65,6 @@ class UNET(nn.Module):
                 kernel_sizes = [3, 5, 7], 
                 pos_sizes = [[8]] * 3,
                 args = self.args),
-            nn.Dropout2d(self.args.unet_dropout),
             nn.GroupNorm(8, 64),
             nn.LeakyReLU(),
             SelfAttention(
@@ -77,9 +76,11 @@ class UNET(nn.Module):
                 kernel_sizes = [3, 5, 7], 
                 pos_sizes = [[8]] * 3,
                 args = self.args),
-            nn.Dropout2d(self.args.unet_dropout),
             nn.GroupNorm(8, 64),
-            nn.LeakyReLU())
+            nn.LeakyReLU(),
+            SelfAttention(
+                in_channels = 64, 
+                kernel_size = 1))
         
         example = self.a(example)
         example_step_a = example
@@ -104,9 +105,11 @@ class UNET(nn.Module):
                 kernel_sizes = [3, 5, 7], 
                 pos_sizes = [[8]] * 3,
                 args = self.args),
-            nn.Dropout2d(self.args.unet_dropout),
             nn.GroupNorm(8, 64),
-            nn.LeakyReLU())
+            nn.LeakyReLU(),
+            SelfAttention(
+                in_channels = 64, 
+                kernel_size = 1))
         
         example = self.b(example)
         example_step_b = example
@@ -123,15 +126,20 @@ class UNET(nn.Module):
             nn.Dropout2d(self.args.unet_dropout),
             nn.GroupNorm(8, 64),
             nn.LeakyReLU(),
+            SelfAttention(
+                in_channels = 64, 
+                kernel_size = 1),
             Multi_Kernel_Conv(
                 in_channels = example.shape[1], 
                 out_channels = [16, 32, 16], 
                 kernel_sizes = [3, 5, 7], 
                 pos_sizes = [[8]] * 3,
                 args = self.args),
-            nn.Dropout2d(self.args.unet_dropout),
             nn.GroupNorm(8, 64),
-            nn.LeakyReLU())
+            nn.LeakyReLU(),
+            SelfAttention(
+                in_channels = 64, 
+                kernel_size = 1))
         
         example = self.c(example)
         example_step_c = example
@@ -148,15 +156,20 @@ class UNET(nn.Module):
             nn.Dropout2d(self.args.unet_dropout),
             nn.GroupNorm(8, 64),
             nn.LeakyReLU(),
+            SelfAttention(
+                in_channels = 64, 
+                kernel_size = 1),
             Multi_Kernel_Conv(
                 in_channels = example.shape[1], 
                 out_channels = [16, 32, 16], 
                 kernel_sizes = [3, 5, 7], 
                 pos_sizes = [[8]] * 3,
                 args = self.args),
-            nn.Dropout2d(self.args.unet_dropout),
             nn.GroupNorm(8, 64),
-            nn.LeakyReLU())
+            nn.LeakyReLU(),
+            SelfAttention(
+                in_channels = 64, 
+                kernel_size = 1))
         
         example = self.d(example)
         example += example_step_c
@@ -172,15 +185,20 @@ class UNET(nn.Module):
             nn.Dropout2d(self.args.unet_dropout),
             nn.GroupNorm(8, 64),
             nn.LeakyReLU(),
+            SelfAttention(
+                in_channels = 64, 
+                kernel_size = 1),
             Multi_Kernel_Conv(
                 in_channels = example.shape[1], 
                 out_channels = [16, 32, 16], 
                 kernel_sizes = [3, 5, 7], 
                 pos_sizes = [[8]] * 3,
                 args = self.args),
-            nn.Dropout2d(self.args.unet_dropout),
             nn.GroupNorm(8, 64),
-            nn.LeakyReLU())
+            nn.LeakyReLU(),
+            SelfAttention(
+                in_channels = 64, 
+                kernel_size = 1))
         
         example = self.e(example)
         example += example_step_1
@@ -193,7 +211,6 @@ class UNET(nn.Module):
                 kernel_sizes = [3, 5, 7], 
                 pos_sizes = [[8]] * 3,
                 args = self.args),
-            nn.Dropout2d(self.args.unet_dropout),
             nn.GroupNorm(8, 64),
             nn.LeakyReLU())
         
