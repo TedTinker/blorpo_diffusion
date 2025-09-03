@@ -5,6 +5,8 @@ from utils import file_location
 
 os.chdir(file_location)
 
+import math
+
 import torch
 import torch.nn as nn
 from torchinfo import summary
@@ -12,8 +14,8 @@ from torch.profiler import profile, record_function, ProfilerActivity
 import torch.nn.functional as F
 
 from utils import default_args
-from utils_for_torch import init_weights, ConstrainedConv2d, var, sample, Multi_Kernel_CAB, add_position_layers, \
-    SpaceToDepth, DepthToSpace, ResBlock, AttnBlock
+from utils_for_torch import init_weights, ConstrainedConv2d, var, sample, Multi_Kernel_Conv, add_position_layers, \
+    SpaceToDepth, DepthToSpace, SelfAttention
 
 
 
@@ -25,92 +27,200 @@ class UNET(nn.Module):
         self.args = args
         
         # This is my kludgey way to see qualities that layers should have.
-        example = torch.zeros(self.args.batch_size, 4, 8, 8)
-        print(f"\nStart of UNET:\t{example.shape}")
+        example = torch.zeros(self.args.batch_size, self.args.latent_channels, 16, 16)
+        example_std = torch.zeros_like(example)
+
+        print(f"\nStart of UNET:\t{example.shape, example_std.shape}")
+                
+        self.latent = nn.Sequential(
+            Multi_Kernel_Conv(
+                in_channels = example.shape[1], 
+                out_channels = [16, 8, 8], 
+                kernel_sizes = [3, 5, 7], 
+                pos_sizes = [[8]] * 3,
+                args = self.args),
+            nn.GroupNorm(8, 32),
+            nn.LeakyReLU())
         
-        c = 32
+        self.std = nn.Sequential(
+            Multi_Kernel_Conv(
+                in_channels = example_std.shape[1], 
+                out_channels = [16, 8, 8], 
+                kernel_sizes = [3, 5, 7], 
+                pos_sizes = [[8]] * 3,
+                args = self.args),
+            nn.GroupNorm(8, 32),
+            nn.LeakyReLU())
+        
+        example = self.latent(example)
+        example_std = self.std(example_std)
+        example = torch.cat([example, example_std], dim = 1)
+        example_step_1 = example 
+        print(f"UNET first:\t{example.shape}")
         
         self.a = nn.Sequential(
-            ConstrainedConv2d(
-                in_channels = example.shape[1], 
-                out_channels = c,
-                kernel_size = 1))
+            Multi_Kernel_Conv(
+                in_channels = example.shape[1],
+                out_channels = [16, 32, 16], 
+                kernel_sizes = [3, 5, 7], 
+                pos_sizes = [[8]] * 3,
+                args = self.args),
+            nn.Dropout2d(self.args.unet_dropout),
+            nn.GroupNorm(8, 64),
+            nn.LeakyReLU(),
+            SelfAttention(
+                in_channels = 64, 
+                kernel_size = 1),
+            Multi_Kernel_Conv(
+                in_channels = example.shape[1],
+                out_channels = [16, 32, 16], 
+                kernel_sizes = [3, 5, 7], 
+                pos_sizes = [[8]] * 3,
+                args = self.args),
+            nn.Dropout2d(self.args.unet_dropout),
+            nn.GroupNorm(8, 64),
+            nn.LeakyReLU())
         
         example = self.a(example)
-        example_skip = example 
+        example_step_a = example
         print(f"UNET a:\t{example.shape}")
         
         self.b = nn.Sequential(
-            # 8 by 8
-            ResBlock(c),
-            ConstrainedConv2d(
-                in_channels = c, 
-                out_channels = c,
+            Multi_Kernel_Conv(
+                in_channels = example.shape[1], 
+                out_channels = [16, 32, 16], 
+                kernel_sizes = [3, 5, 7], 
+                pos_sizes = [[8]] * 3,
+                args = self.args),
+            nn.Dropout2d(self.args.unet_dropout),
+            nn.GroupNorm(8, 64),
+            nn.LeakyReLU(),
+            SelfAttention(
+                in_channels = 64, 
                 kernel_size = 1),
-            ResBlock(c),
-            ConstrainedConv2d(
-                in_channels = c, 
-                out_channels = c,
-                kernel_size = 1),
-            AttnBlock(c),
-            SpaceToDepth(block_size=2),  
-            ConstrainedConv2d(
-                in_channels = c * 4, 
-                out_channels = c,
-                kernel_size = 1),
-            # 4 by 4
-            ResBlock(c),
-            ConstrainedConv2d(
-                in_channels = c, 
-                out_channels = c,
-                kernel_size = 1),
-            ResBlock(c),
-            ConstrainedConv2d(
-                in_channels = c, 
-                out_channels = c,
-                kernel_size = 1),
-            AttnBlock(c),
-            DepthToSpace(block_size = 2),
-            ConstrainedConv2d(
-                in_channels = c // 4, 
-                out_channels = c,
-                kernel_size = 1),)
-            # 8 by 8
-            
+            Multi_Kernel_Conv(
+                in_channels = example.shape[1], 
+                out_channels = [16, 32, 16], 
+                kernel_sizes = [3, 5, 7], 
+                pos_sizes = [[8]] * 3,
+                args = self.args),
+            nn.Dropout2d(self.args.unet_dropout),
+            nn.GroupNorm(8, 64),
+            nn.LeakyReLU())
+        
         example = self.b(example)
+        example_step_b = example
+        example += example_step_a
         print(f"UNET b:\t{example.shape}")
-        example = torch.cat([example, example_skip], dim=1)
-        print(f"UNET skip:\t{example.shape}")
         
         self.c = nn.Sequential(
-            ConstrainedConv2d(
+            Multi_Kernel_Conv(
                 in_channels = example.shape[1], 
-                out_channels = c,
-                kernel_size = 1),
-            ResBlock(c),
-            ConstrainedConv2d(
-                in_channels = c, 
-                out_channels = c,
-                kernel_size = 1),
-            ResBlock(c),
-            AttnBlock(c),
-            nn.GroupNorm(1, c),  
-            nn.SiLU(),           
-            nn.Conv2d(c, 4, kernel_size=3, padding=1))
+                out_channels = [16, 32, 16], 
+                kernel_sizes = [3, 5, 7], 
+                pos_sizes = [[8]] * 3,
+                args = self.args),
+            nn.Dropout2d(self.args.unet_dropout),
+            nn.GroupNorm(8, 64),
+            nn.LeakyReLU(),
+            Multi_Kernel_Conv(
+                in_channels = example.shape[1], 
+                out_channels = [16, 32, 16], 
+                kernel_sizes = [3, 5, 7], 
+                pos_sizes = [[8]] * 3,
+                args = self.args),
+            nn.Dropout2d(self.args.unet_dropout),
+            nn.GroupNorm(8, 64),
+            nn.LeakyReLU())
         
         example = self.c(example)
+        example_step_c = example
+        example += example_step_b
         print(f"UNET c:\t{example.shape}")
-
+        
+        self.d = nn.Sequential(
+            Multi_Kernel_Conv(
+                in_channels = example.shape[1], 
+                out_channels = [16, 32, 16], 
+                kernel_sizes = [3, 5, 7], 
+                pos_sizes = [[8]] * 3,
+                args = self.args),
+            nn.Dropout2d(self.args.unet_dropout),
+            nn.GroupNorm(8, 64),
+            nn.LeakyReLU(),
+            Multi_Kernel_Conv(
+                in_channels = example.shape[1], 
+                out_channels = [16, 32, 16], 
+                kernel_sizes = [3, 5, 7], 
+                pos_sizes = [[8]] * 3,
+                args = self.args),
+            nn.Dropout2d(self.args.unet_dropout),
+            nn.GroupNorm(8, 64),
+            nn.LeakyReLU())
+        
+        example = self.d(example)
+        example += example_step_c
+        print(f"UNET d:\t{example.shape}")
+        
+        self.e = nn.Sequential(
+            Multi_Kernel_Conv(
+                in_channels = example.shape[1], 
+                out_channels = [16, 32, 16], 
+                kernel_sizes = [3, 5, 7], 
+                pos_sizes = [[8]] * 3,
+                args = self.args),
+            nn.Dropout2d(self.args.unet_dropout),
+            nn.GroupNorm(8, 64),
+            nn.LeakyReLU(),
+            Multi_Kernel_Conv(
+                in_channels = example.shape[1], 
+                out_channels = [16, 32, 16], 
+                kernel_sizes = [3, 5, 7], 
+                pos_sizes = [[8]] * 3,
+                args = self.args),
+            nn.Dropout2d(self.args.unet_dropout),
+            nn.GroupNorm(8, 64),
+            nn.LeakyReLU())
+        
+        example = self.e(example)
+        example += example_step_1
+        print(f"UNET e:\t{example.shape}")
+        
+        self.f = nn.Sequential(
+            Multi_Kernel_Conv(
+                in_channels = example.shape[1], 
+                out_channels = [16, 32, 16], 
+                kernel_sizes = [3, 5, 7], 
+                pos_sizes = [[8]] * 3,
+                args = self.args),
+            nn.Dropout2d(self.args.unet_dropout),
+            nn.GroupNorm(8, 64),
+            nn.LeakyReLU())
+        
+        example = self.f(example)
+        print(f"UNET f:\t{example.shape}")
+        
+        self.out = nn.Sequential(
+            nn.Conv2d(example.shape[1], self.args.latent_channels, kernel_size=1))
+        
+        example = self.out(example)
+        print(f"UNET out:\t{example.shape}")
+        
         self.apply(init_weights)
         self.to(self.args.device)
 
-    def forward(self, latent):
-        x = self.a(latent)                   
-        x_skip = x
-        x = self.b(x)              
-        x = torch.cat([x, x_skip], dim=1)      
-        epsilon = self.c(x)
-        return epsilon
+    def forward(self, latent, std):
+        latent = self.latent(latent)
+        std = self.std(std)
+        x = torch.cat([latent, std], dim = 1)
+        a   = self.a(x)   
+        b   = self.b(a)     
+        c   = self.c(b + a + x)     
+        d   = self.d(c + b)          
+        e   = self.e(d + c + x)     
+        f   = self.f(e + d)   
+        out = self.out(f + e + x)
+        return out
                      
 
 
@@ -123,6 +233,6 @@ if(__name__ == "__main__"):
     print()
     with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
         with record_function("model_inference"):
-            print(summary(unet, (args.batch_size, 4, 8, 8)))
+            print(summary(unet, ((args.batch_size, args.latent_channels, 16, 16), (args.batch_size, args.latent_channels, 16, 16))))
     #print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=100))
 # %%

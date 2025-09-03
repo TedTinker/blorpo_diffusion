@@ -90,28 +90,31 @@ class VAE(nn.Module):
                 pos_sizes = [[8, 16]] * 3,
                 args = self.args),
             SpaceToDepth(block_size=2),  
+            nn.Dropout2d(self.args.vae_dropout),
             nn.GroupNorm(8, 128),
             nn.LeakyReLU(),
-            # 32 by 32
             
+            # 32 by 32
             Multi_Kernel_Conv(
                 in_channels = 128,
                 out_channels = [16, 16], 
                 kernel_sizes = [3, 5], 
                 args = self.args),
             SpaceToDepth(block_size=2),  
+            nn.Dropout2d(self.args.vae_dropout),
             nn.GroupNorm(8, 128),
             nn.LeakyReLU(),
             SelfAttention(
                 in_channels = 128, 
                 kernel_size = 3),
-            # 16 by 16
             
+            # 16 by 16
             Multi_Kernel_Conv(
                 in_channels = 128,
                 out_channels = [32], 
                 kernel_sizes = [3], 
                 args = self.args),
+            nn.Dropout2d(self.args.vae_dropout),
             nn.GroupNorm(8, 32),
             nn.LeakyReLU())
             
@@ -147,6 +150,7 @@ class VAE(nn.Module):
                 kernel_sizes = [3], 
                 pos_sizes = [[8]],
                 args = self.args),
+            nn.Dropout2d(self.args.vae_dropout),
             nn.GroupNorm(8, 32),
             nn.LeakyReLU(),
                         
@@ -161,13 +165,14 @@ class VAE(nn.Module):
                 out_channels = [16, 16], 
                 kernel_sizes = [3, 5], 
                 args = self.args),
+            nn.Dropout2d(self.args.vae_dropout),
             nn.GroupNorm(8, 32),
             nn.LeakyReLU(),
             SelfAttention(
                 in_channels = 32, 
                 kernel_size = 3),
-            # 32 by 32
             
+            # 32 by 32
             Multi_Kernel_Conv(
                 in_channels = 32,
                 out_channels = [32], 
@@ -179,15 +184,17 @@ class VAE(nn.Module):
                 out_channels = [16, 16], 
                 kernel_sizes = [3, 5], 
                 args = self.args),
+            nn.Dropout2d(self.args.vae_dropout),
             nn.GroupNorm(8, 32),
             nn.LeakyReLU(),
-            # 64 by 64
             
+            # 64 by 64
             Multi_Kernel_Conv(
                 in_channels = 32,
                 out_channels = [16, 8, 8], 
                 kernel_sizes = [3, 5, 7], 
                 args = self.args),
+            nn.Dropout2d(self.args.vae_dropout),
             nn.GroupNorm(8, 32),
             nn.LeakyReLU(),
             nn.Conv2d(
@@ -238,9 +245,9 @@ class VAE(nn.Module):
         # Calculate DKL.
         dkl_1 = calculate_dkl(mu, std, torch.zeros_like(mu), torch.ones_like(std)).mean()
         dkl_2 = calculate_dkl(torch.zeros_like(mu), torch.ones_like(std), mu, std).mean()
-        dkl = (dkl_1 + dkl_2) / 2
                 
-        return decoded, encoded, dkl
+        return decoded, encoded, dkl_1, dkl_2, mu, std
+
 
 
 

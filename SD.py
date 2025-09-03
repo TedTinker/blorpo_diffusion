@@ -17,8 +17,7 @@ from torch.distributions import Normal
 from utils import default_args, pokemon_sample, plot_vals, get_random_batch, print, duration, show_images_from_tensor, save_vae_comparison_grid
 from utils_for_torch import sample, create_interpolated_tensor, ConstrainedConv2d
 from vae import VAE
-#from unet import UNET
-from unet_small import UNET
+from unet import UNET
 
 
 
@@ -57,7 +56,10 @@ class SD:
         self.current_noise = self.args.min_noise
         self.plot_vals_dict = {
             "vae_loss" : [],
-            "dkl_loss" : [],
+            "dkl_1_loss" : [],
+            "dkl_2_loss" : [],
+            "vae_mu" : [],
+            "vae_std" : [],
             "unet_loss" : []}
         self.pokemon = pokemon_sample
         self.loop = create_interpolated_tensor()
@@ -93,9 +95,9 @@ class SD:
             
         if(unet_train or not new_batch):
             with torch.no_grad():                          
-                decoded, encoded, dkl = self.vae(real_imgs, use_std=False)
+                decoded, encoded, dkl_1, dkl_2, vae_mu, vae_std = self.vae(real_imgs, use_std=False)
         else:
-            decoded, encoded, dkl = self.vae(real_imgs)
+            decoded, encoded, dkl_1, dkl_2, vae_mu, vae_std = self.vae(real_imgs)
             
         if(new_batch):  
             std = torch.rand(size=(encoded.size(0),), device=self.args.device) * self.current_noise
@@ -120,7 +122,10 @@ class SD:
             "real_imgs" : real_imgs,
             "encoded" : encoded,
             "decoded" : decoded,
-            "dkl" : dkl,
+            "dkl_1" : dkl_1,
+            "dkl_2" : dkl_2,
+            "vae_mu" : vae_mu,
+            "vae_std" : vae_std,
             "std" : std,
             "epsilon" : epsilon,
             "predicted_epsilon" : predicted_epsilon,
@@ -134,20 +139,24 @@ class SD:
     # Train VAE.
     def epoch_for_vae(self):
         
-        real_imgs, decoded, dkl = operator.itemgetter(
-            "real_imgs", "decoded", "dkl")(
+        real_imgs, decoded, dkl_1, dkl_2, vae_mu, vae_std = operator.itemgetter(
+            "real_imgs", "decoded", "dkl_1", "dkl_2", "vae_mu", "vae_std")(
                 self.vae_vs_unet(vae_train = True))
         
         recon_loss = F.l1_loss(decoded, real_imgs)   
-        dkl_loss = self.args.vae_beta * dkl            
-        vae_loss = recon_loss + dkl_loss
+        dkl_1_loss = self.args.vae_beta * dkl_1
+        dkl_2_loss = self.args.vae_beta * dkl_2
+        vae_loss = recon_loss + (dkl_1_loss + dkl_2_loss)/2
     
         self.vae_opt.zero_grad(set_to_none=True)
         vae_loss.backward()
         self.vae_opt.step()
         
         self.plot_vals_dict["vae_loss"].append(vae_loss.detach().cpu())
-        self.plot_vals_dict["dkl_loss"].append(dkl_loss.detach().cpu())
+        self.plot_vals_dict["dkl_1_loss"].append(dkl_1_loss.detach().cpu())
+        self.plot_vals_dict["dkl_2_loss"].append(dkl_2_loss.detach().cpu())
+        self.plot_vals_dict["vae_mu"].append(vae_mu.mean().detach().cpu())
+        self.plot_vals_dict["vae_std"].append(vae_std.mean().detach().cpu())
             
         for module in self.vae.modules():
             if isinstance(module, ConstrainedConv2d):
@@ -155,8 +164,9 @@ class SD:
                 
         if self.epochs_for_vae % self.args.epochs_per_vid == 0:
             print("Saving VAE example...")
+            self.save_vae()
             self.save_examples(
-                grid_save_pos = self.gen_location + f"/VAE_epoch_{self.epochs_for_vae}.png",
+                grid_save_pos = self.gen_location + "/VAE_example.png",
                 val_save_pos = self.gen_location)
         torch.cuda.empty_cache()
                 
@@ -179,21 +189,22 @@ class SD:
         
         self.plot_vals_dict["unet_loss"].append(unet_loss.detach().cpu())
 
-        #for module in self.unet.modules():
-        #    if isinstance(module, ConstrainedConv2d):
-        #        module.clamp_weights()
+        for module in self.unet.modules():
+            if isinstance(module, ConstrainedConv2d):
+                module.clamp_weights()
     
         if self.epochs_for_unet % self.args.epochs_per_vid == 0:
             print(f"Saving UNET examples... (Current Noise: {round(self.current_noise, 2)})")
+            self.save_unet()
             self.save_examples(
                 grid_save_pos = self.gen_location + f"/UNET_epoch_{self.epochs_for_unet}/UNET_epoch_{self.epochs_for_unet}.png",
                 val_save_pos = self.gen_location + f"/UNET_epoch_{self.epochs_for_unet}")
-            for r, rate in enumerate([
-                    [99999999] * 1 + [1, .75, .5, .25]]):
-                imgs = self.unet_loop(rate)
-                save_rel = file_location + f"/generated_images/{self.args.arg_name}/UNET_epoch_{self.epochs_for_unet}/{rate}"
-                show_images_from_tensor(imgs, save_path=save_rel, fps=10) 
-            self.save_unet()
+            
+            imgs = self.unet_loop(
+                actual_noise_list = self.args.actual_noise_list,       
+                lied_noise_list = self.args.lied_noise_list)
+            save_rel = file_location + f"/generated_images/{self.args.arg_name}/UNET_epoch_{self.epochs_for_unet}/loop"
+            show_images_from_tensor(imgs, save_path=save_rel, fps=10) 
         torch.cuda.empty_cache()
         
         if(self.current_noise < self.args.max_noise):
@@ -207,33 +218,31 @@ class SD:
     
     # Let's do this!
     def training(self):
-        
         print("\nTRAINING VAE:")
+        vae_start = datetime.datetime.now()
         for epoch in range(self.args.epochs_for_vae):
             self.epoch_for_vae()
             if(epoch % 25 == 0):
                 percent_done = round(100 * self.epochs_for_vae / self.args.epochs_for_vae, 2)
-                print(f"{percent_done}%", end = "... ")
+                print(f"{percent_done}%, {duration(vae_start)}", end = "... ")
                 
         self.save_vae()
-                
+                 
         print("\n\nTRAINING UNET:")
+        unet_start = datetime.datetime.now()
         for epoch in range(self.args.epochs_for_unet):
             self.epoch_for_unet()
             if(epoch % 25 == 0):
                 percent_done = round(100 * self.epochs_for_unet / self.args.epochs_for_unet, 2)
-                print(f"{percent_done}%", end = "... ")
+                print(f"{percent_done}%, {duration(unet_start)}", end = "... ")
                 
         self.save_unet()
-                
-        
-        
-        for r, rate in enumerate([
-                [99999999] * 1 + [1, .75, .5, .25]]):
-            print(f"{r}, {rate}")
-            imgs = self.unet_loop(rate)
-            save_rel = file_location + f"/generated_images/{self.args.arg_name}/{r}"
-            show_images_from_tensor(imgs, save_path=save_rel, fps=10)  
+            
+        imgs = self.unet_loop(
+            actual_noise_list = self.args.actual_noise_list,         # I think these should be the higher ones
+            lied_noise_list = self.args.lied_noise_list)
+        save_rel = file_location + f"/generated_images/{self.args.arg_name}/loop"
+        show_images_from_tensor(imgs, save_path=save_rel, fps=10)  
                 
                 
 
@@ -242,25 +251,27 @@ class SD:
             decoded, noisy_imgs, predicted_imgs = operator.itemgetter(
                 "decoded", "noisy_imgs", "predicted_imgs")(
                     self.vae_vs_unet(new_batch = False))
-        save_vae_comparison_grid(self.pokemon, decoded, noisy_imgs, predicted_imgs, grid_save_pos)
+        save_vae_comparison_grid(self.pokemon, decoded, noisy_imgs, predicted_imgs, grid_save_pos, self.std)
         plot_vals(self.plot_vals_dict, val_save_pos)
         
     
     
     @torch.no_grad()
-    def unet_loop(self, noise_list):
+    def unet_loop(self, actual_noise_list, lied_noise_list):
         self.vae.eval() 
         self.unet.eval()
         img = self.loop.clone()
         
-        current_noise_list = [(torch.tensor(float(n)).to(self.args.device)) for n in noise_list]
+        actual_noise_list = [(torch.tensor(float(n)).to(self.args.device)) for n in actual_noise_list]
+        lied_noise_list = [(torch.tensor(float(n)).to(self.args.device)) for n in lied_noise_list]
 
-        for noise in current_noise_list:
-            _, encoded, _ = self.vae(img)     # Is it better to NOT re-encode each time?
-            std = noise.view(1,1,1,1).expand_as(encoded)
-            epsilon = Normal(0, 1).sample(std.shape).to(std.device)    
-            noisy_encoded = encoded + std * epsilon
-            eps_hat = self.unet(noisy_encoded, std) * std    
+        for actual_noise, lied_noise in zip(actual_noise_list, lied_noise_list):
+            _, encoded, _, _, _, _ = self.vae(img, use_std = False)     # Is it better to NOT re-encode each time?
+            actual_std = actual_noise.view(1,1,1,1).expand_as(encoded)
+            actual_epsilon = Normal(0, 1).sample(actual_std.shape).to(actual_std.device)    
+            lied_std = lied_noise.view(1,1,1,1).expand_as(encoded)
+            noisy_encoded = encoded + actual_std * actual_epsilon
+            eps_hat = self.unet(noisy_encoded, lied_std) * lied_std    
             encoded = noisy_encoded - eps_hat
             img = (self.vae.decode(encoded) + 1) / 2
             

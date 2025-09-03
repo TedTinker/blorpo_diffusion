@@ -36,7 +36,7 @@ start_time = datetime.datetime.now()
 
 def duration(start_time = start_time):
     change_time = datetime.datetime.now() - start_time
-    change_time = change_time# - datetime.timedelta(microseconds=change_time.microseconds)
+    change_time = change_time - datetime.timedelta(microseconds=change_time.microseconds)
     return(change_time)
 
 def estimate_total_duration(proportion_completed, start_time=start_time):
@@ -73,13 +73,17 @@ parser.add_argument("--epochs_for_vae",                 type=int,       default 
                     help='How many epochs for training?') 
 parser.add_argument("--vae_lr",                         type=float,     default = .001,
                     help='Learning rate for generator.') 
-parser.add_argument("--vae_beta",                        type=float,    default = .01,
+parser.add_argument("--vae_dropout",                        type=int,       default = .0,
+                    help='How much dropout for the discriminator?') 
+parser.add_argument("--vae_beta",                        type=float,    default = .1, #.03,
                     help='Learning rate for discriminator')  
 
 parser.add_argument("--epochs_for_unet",                type=int,       default = 500000,
                     help='How many epochs for training?') 
 parser.add_argument("--unet_lr",                        type=float,     default = .001,
                     help='Learning rate for discriminator.')  
+parser.add_argument("--unet_dropout",                   type=int,       default = .0,
+                    help='How much dropout for the discriminator?') 
 parser.add_argument("--min_noise",                      type=float,     default = .3,
                     help='Learning rate for discriminator.')  
 parser.add_argument("--max_noise",                      type=float,     default = 7,
@@ -87,11 +91,8 @@ parser.add_argument("--max_noise",                      type=float,     default 
 parser.add_argument("--change_rate",                    type=float,     default = .001,
                     help='Learning rate for discriminator.')  
 
-
 parser.add_argument("--batch_size",                     type=int,       default = 64,
                     help='How large are the batches used in epochs?') 
-parser.add_argument("--dropout",                        type=int,       default = .01,
-                    help='How much dropout for the discriminator?') 
 parser.add_argument("--image_size",                     type=int,       default = 64,
                     help='How large are the pictures? (Not used much.)') 
 parser.add_argument("--latent_channels",                type=int,       default = 32,
@@ -116,6 +117,12 @@ parser.add_argument("--seeds_used",                     type=int,       default 
                     help='When making pictures and videos, how many seeds?') 
 parser.add_argument("--seed_duration",                  type=int,       default = 10,
                     help='When making pictures and videos, how many steps transationing from one to another?') 
+
+parser.add_argument("--actual_noise_list",              type=list,       default = [999,    2,  1,  .5],
+                    help='When making pictures and videos, how many steps transationing from one to another?') 
+parser.add_argument("--lied_noise_list",                type=list,       default = [7,      1.75, .75,     .1],
+                    help='When making pictures and videos, how many steps transationing from one to another?') 
+
 
 
 
@@ -216,12 +223,12 @@ def get_random_batch(all_images_tensor = all_images_tensor, batch_size=64):
 
 
 
-def save_vae_comparison_grid(real_pokemon, vae_pokemon, noisy_pokemon, unet_pokemon, filename):
+def save_vae_comparison_grid(real_pokemon, vae_pokemon, noisy_pokemon, unet_pokemon, filename, std):
     # Move to CPU for plotting
-
+    
     N = real_pokemon.size(0)
     # Build a 2 x N grid: top = originals, bottom = reconstructions
-    fig, axes = plt.subplots(4, N, figsize=(2*N, 4), squeeze=False)
+    fig, axes = plt.subplots(5, N, figsize=(2*N, 4), squeeze=False)
     for i in range(N):
         # Originals
         ax = axes[0, i]
@@ -250,7 +257,13 @@ def save_vae_comparison_grid(real_pokemon, vae_pokemon, noisy_pokemon, unet_poke
         ax.axis("off")
         if i == 0:
             ax.set_title("reconstruction w/ unet", fontsize=10)
-
+            
+        ax = axes[4, i]
+        ax.text(0.5, 0.5, f"{round(std[i].item(), 2)}")
+        ax.axis("off")
+        if i == 0:
+            ax.set_title("noise", fontsize=10)
+        
     os.makedirs(os.path.dirname(filename), exist_ok=True)
     fig.savefig(filename, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -327,14 +340,32 @@ def plot_vals(plot_vals_dict, save_path='losses.png', fontsize=7):
 
     vae_epochs = [i for i in range(len(plot_vals_dict["vae_loss"]))]
     unet_epochs = [i for i in range(len(plot_vals_dict["unet_loss"]))]
+    epsilon = 1e-8
     
     # Plotting
     plt.figure(figsize=(12, 6))
 
-    plt.subplot(1, 2, 1)
-    plt.plot(vae_epochs, plot_vals_dict["vae_loss"], 'red', label="VAE Loss", alpha=0.8)
-    plt.plot(vae_epochs, plot_vals_dict["dkl_loss"], 'green', label="DKL Loss", alpha=0.8)
+    plt.subplot(1, 3, 1)
+    plt.plot(vae_epochs, plot_vals_dict["vae_mu"], 'red', label="VAE MU", alpha=0.8)
+    plt.plot(vae_epochs, plot_vals_dict["vae_std"], 'green', label="VAE STD", alpha=0.8)
     plt.xlabel("Epochs")
+    plt.ylabel("Value")
+    #plt.ylim(-1, 25)
+    ymin, ymax = plt.ylim()   # get current y-axis range
+    #yticks = np.arange(np.floor(ymin*10)/10, np.ceil(ymax*10)/10 + 0.1, 0.1)
+    #plt.yticks(yticks)
+    plt.title("VAE MU and STD")
+    plt.legend(fontsize=fontsize)
+    plt.grid(True)
+
+    plt.subplot(1, 3, 2)
+    plt.plot(vae_epochs, [l + epsilon for l in plot_vals_dict["vae_loss"]], 'red', label="VAE Loss", alpha=0.8)
+    plt.plot(vae_epochs, [l + epsilon for l in plot_vals_dict["dkl_1_loss"]], 'green', label="DKL 1 Loss", alpha=0.8)
+    plt.plot(vae_epochs, [l + epsilon for l in plot_vals_dict["dkl_2_loss"]], 'blue', label="DKL 2 Loss", alpha=0.8)
+    plt.plot(vae_epochs, [l_1 + l_2 + epsilon for l_1, l_2 in zip(plot_vals_dict["dkl_1_loss"], plot_vals_dict["dkl_2_loss"])], 'black', label="Total DKL Loss", alpha=0.8)
+
+    plt.xlabel("Epochs")
+    plt.yscale("log")
     plt.ylabel("VAE Loss")
     #plt.ylim(-1, 25)
     ymin, ymax = plt.ylim()   # get current y-axis range
@@ -344,9 +375,10 @@ def plot_vals(plot_vals_dict, save_path='losses.png', fontsize=7):
     plt.legend(fontsize=fontsize)
     plt.grid(True)
 
-    plt.subplot(1, 2, 2)
-    plt.plot(unet_epochs, plot_vals_dict["unet_loss"], 'red', label="UNET Loss", alpha=0.8)
+    plt.subplot(1, 3, 3)
+    plt.plot(unet_epochs, [l + epsilon for l in plot_vals_dict["unet_loss"]], 'red', label="UNET Loss", alpha=0.8)
     plt.xlabel("UNET Epochs")
+    plt.yscale("log")
     plt.ylabel("UNET Loss")
     #plt.ylim(-1, 25)
     ymin, ymax = plt.ylim()   # get current y-axis range
@@ -359,7 +391,7 @@ def plot_vals(plot_vals_dict, save_path='losses.png', fontsize=7):
     name_part_1 = 'VAE' if len(unet_epochs) == 0 else 'UNET'
     name_part_2 = len(vae_epochs) if len(unet_epochs) == 0 else len(unet_epochs)
     plt.tight_layout()
-    plt.savefig(save_path + f"/losses_{name_part_1}_{name_part_2}.png")
+    plt.savefig(save_path + f"/losses_{name_part_1}.png")
     plt.close()
     
     
