@@ -25,35 +25,8 @@ from unet import UNET
 class SD:
     def __init__(self, args = default_args):
         self.args = args
-        
-        # Folder to save in.
-        self.gen_location = file_location + f"/generated_images/{self.args.arg_name}"
-        if not os.path.exists(self.gen_location):
-            os.makedirs(self.gen_location)
-        
-        self.epochs_for_vae = 1
-        self.epochs_for_unet = 1
         self.session_start_time = datetime.datetime.now()
         
-        self.vae = VAE()
-        try:
-            self.vae.load_state_dict(torch.load(self.gen_location + "/vae.py", weights_only=True))
-            self.args.epochs_for_vae = 0
-        except:
-            pass
-        self.vae_opt = Adam(self.vae.parameters(), args.vae_lr, weight_decay=.0001)
-        self.vae.train()
-        
-        self.unet = UNET()
-        try:
-            self.unet.load_state_dict(torch.load(self.gen_location + "/unet.py", weights_only=True))
-            self.args.epochs_for_unet = 0
-        except:
-            pass
-        self.unet_opt = Adam(self.unet.parameters(), args.unet_lr, weight_decay=.0001)
-        self.unet.train()
-        
-        self.current_noise = self.args.min_noise
         self.plot_vals_dict = {
             "vae_loss" : [],
             "dkl_1_loss" : [],
@@ -64,8 +37,39 @@ class SD:
         self.pokemon = pokemon_sample
         self.loop = create_interpolated_tensor()
                 
-        std = [i * self.args.max_noise / 10 for i in range(10)]
+        std = [i * self.args.max_noise_unet / 10 for i in range(10)]
         self.std = torch.tensor(std).to(self.args.device)
+        
+        # Folder to save in.
+        self.gen_location = file_location + f"/generated_images/{self.args.arg_name}"
+        if not os.path.exists(self.gen_location):
+            os.makedirs(self.gen_location)
+        
+        
+        
+        self.epochs_for_vae = 1
+        self.current_noise_vae = self.args.min_noise_vae
+        self.vae = VAE()
+        try:
+            self.vae.load_state_dict(torch.load(self.gen_location + "/vae.py", weights_only=True))
+            self.args.epochs_for_vae = 0
+        except:
+            pass
+        self.vae_opt = Adam(self.vae.parameters(), args.vae_lr, weight_decay=.0001)
+        self.vae.train()
+        
+        
+        
+        self.epochs_for_unet = 1
+        self.current_noise_unet = self.args.min_noise_unet
+        self.unet = UNET()
+        try:
+            self.unet.load_state_dict(torch.load(self.gen_location + "/unet.py", weights_only=True))
+            self.args.epochs_for_unet = 0
+        except:
+            pass
+        self.unet_opt = Adam(self.unet.parameters(), args.unet_lr, weight_decay=.0001)
+        self.unet.train()
         
         
         
@@ -92,16 +96,22 @@ class SD:
         else:           self.unet.eval()
         if(new_batch):  real_imgs = get_random_batch(batch_size=self.args.batch_size)
         else:           real_imgs = self.pokemon
+        
+        b = real_imgs.size(0)
+        std = torch.rand(b, 1, 1, 1, device=self.args.device) * self.current_noise_vae
+        eps = torch.randn_like(real_imgs)
+        real_imgs_noisy = (real_imgs + std * eps)
+        real_imgs_noisy_for_plotting = real_imgs_noisy.clamp_(0, 1)
             
         if(unet_train or not new_batch):
             with torch.no_grad():                          
-                decoded, encoded, dkl_1, dkl_2, vae_mu, vae_std = self.vae(real_imgs, use_std=False)
+                decoded, encoded, dkl_1, dkl_2, vae_mu, vae_std = self.vae(real_imgs_noisy, use_std=False)
         else:
-            decoded, encoded, dkl_1, dkl_2, vae_mu, vae_std = self.vae(real_imgs)
+            decoded, encoded, dkl_1, dkl_2, vae_mu, vae_std = self.vae(real_imgs_noisy)
             
         if(new_batch):  
-            std = torch.rand(size=(encoded.size(0),), device=self.args.device) * self.current_noise
-            std = std.clamp_(self.args.min_noise, self.args.max_noise)
+            std = torch.rand(size=(encoded.size(0),), device=self.args.device) * self.current_noise_unet
+            std = std.clamp_(self.args.min_noise_unet, self.args.max_noise_unet)
         else:           
             std = self.std
             encoded = encoded[0].repeat(10, 1, 1, 1)
@@ -120,6 +130,7 @@ class SD:
             
         return {
             "real_imgs" : real_imgs,
+            "real_imgs_noisy" : real_imgs_noisy_for_plotting,
             "encoded" : encoded,
             "decoded" : decoded,
             "dkl_1" : dkl_1,
@@ -163,13 +174,17 @@ class SD:
                 module.clamp_weights()
                 
         if self.epochs_for_vae % self.args.epochs_per_vid == 0:
-            print("Saving VAE example...")
+            print(f"Saving VAE example... (Current Noise: {round(self.current_noise_vae, 2)})")
             self.save_vae()
             self.save_examples(
-                grid_save_pos = self.gen_location + "/VAE_example.png",
+                grid_save_pos = self.gen_location + f"/VAE_example_{self.epochs_for_vae}.png",
                 val_save_pos = self.gen_location)
         torch.cuda.empty_cache()
                 
+        if(self.current_noise_vae < self.args.max_noise_vae):
+            self.current_noise_vae += self.args.change_rate_vae
+        else:
+            self.current_noise_vae = self.args.max_noise_vae
         self.epochs_for_vae += 1
         #print(self.epochs_for_vae, end = "... ")
         
@@ -194,7 +209,7 @@ class SD:
                 module.clamp_weights()
     
         if self.epochs_for_unet % self.args.epochs_per_vid == 0:
-            print(f"Saving UNET examples... (Current Noise: {round(self.current_noise, 2)})")
+            print(f"Saving UNET examples... (Current Noise: {round(self.current_noise_unet, 2)})")
             self.save_unet()
             self.save_examples(
                 grid_save_pos = self.gen_location + f"/UNET_epoch_{self.epochs_for_unet}/UNET_epoch_{self.epochs_for_unet}.png",
@@ -207,10 +222,10 @@ class SD:
             show_images_from_tensor(imgs, save_path=save_rel, fps=10) 
         torch.cuda.empty_cache()
         
-        if(self.current_noise < self.args.max_noise):
-            self.current_noise += self.args.change_rate
+        if(self.current_noise_unet < self.args.max_noise_unet):
+            self.current_noise_unet += self.args.change_rate_unet
         else:
-            self.current_noise = self.args.max_noise
+            self.current_noise_unet = self.args.max_noise_unet
         self.epochs_for_unet += 1
         #print(self.epochs_for_unet, end = "... ")
         
@@ -239,7 +254,7 @@ class SD:
         self.save_unet()
             
         imgs = self.unet_loop(
-            actual_noise_list = self.args.actual_noise_list,         # I think these should be the higher ones
+            actual_noise_list = self.args.actual_noise_list,     
             lied_noise_list = self.args.lied_noise_list)
         save_rel = file_location + f"/generated_images/{self.args.arg_name}/loop"
         show_images_from_tensor(imgs, save_path=save_rel, fps=10)  
@@ -248,10 +263,10 @@ class SD:
 
     def save_examples(self, grid_save_pos, val_save_pos):
         with torch.no_grad():
-            decoded, noisy_imgs, predicted_imgs = operator.itemgetter(
-                "decoded", "noisy_imgs", "predicted_imgs")(
+            real_imgs_noisy, decoded, noisy_imgs, predicted_imgs = operator.itemgetter(
+                "real_imgs_noisy", "decoded", "noisy_imgs", "predicted_imgs")(
                     self.vae_vs_unet(new_batch = False))
-        save_vae_comparison_grid(self.pokemon, decoded, noisy_imgs, predicted_imgs, grid_save_pos, self.std)
+        save_vae_comparison_grid(real_imgs_noisy, decoded, noisy_imgs, predicted_imgs, grid_save_pos, self.std)
         plot_vals(self.plot_vals_dict, val_save_pos)
         
     

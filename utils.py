@@ -1,5 +1,8 @@
 #%%
 
+# I think we need to to make vae_beta go up over time.
+# Consider making STDs pixely-not-imagy
+
 import os
 
 # Your file-location here.
@@ -75,8 +78,16 @@ parser.add_argument("--vae_lr",                         type=float,     default 
                     help='Learning rate for generator.') 
 parser.add_argument("--vae_dropout",                    type=int,       default = .0,
                     help='How much dropout for the discriminator?') 
-parser.add_argument("--vae_beta",                       type=float,    default = .05,
+parser.add_argument("--vae_beta",                       type=float,     default = .03,
                     help='Learning rate for discriminator')  
+parser.add_argument("--vae_noise",                      type=float,     default = .2,
+                    help='Learning rate for discriminator.')  
+parser.add_argument("--min_noise_vae",                  type=float,     default = 0,
+                    help='Learning rate for discriminator.')  
+parser.add_argument("--max_noise_vae",                  type=float,     default = .3,
+                    help='Learning rate for discriminator.')  
+parser.add_argument("--change_rate_vae",                type=float,     default = .00002,
+                    help='Learning rate for discriminator.')  
 
 parser.add_argument("--epochs_for_unet",                type=int,       default = 500000,
                     help='How many epochs for training?') 
@@ -84,11 +95,11 @@ parser.add_argument("--unet_lr",                        type=float,     default 
                     help='Learning rate for discriminator.')  
 parser.add_argument("--unet_dropout",                   type=int,       default = .0,
                     help='How much dropout for the discriminator?') 
-parser.add_argument("--min_noise",                      type=float,     default = .3,
+parser.add_argument("--min_noise_unet",                 type=float,     default = .3,
                     help='Learning rate for discriminator.')  
-parser.add_argument("--max_noise",                      type=float,     default = 7,
+parser.add_argument("--max_noise_unet",                 type=float,     default = 7,
                     help='Learning rate for discriminator.')  
-parser.add_argument("--change_rate",                    type=float,     default = .001,
+parser.add_argument("--change_rate_unet",               type=float,     default = .001,
                     help='Learning rate for discriminator.')  
 
 parser.add_argument("--batch_size",                     type=int,       default = 64,
@@ -391,7 +402,7 @@ def plot_vals(plot_vals_dict, save_path='losses.png', fontsize=7):
     name_part_1 = 'VAE' if len(unet_epochs) == 0 else 'UNET'
     name_part_2 = len(vae_epochs) if len(unet_epochs) == 0 else len(unet_epochs)
     plt.tight_layout()
-    plt.savefig(save_path + f"/losses_{name_part_1}.png")
+    plt.savefig(save_path + f"/losses_{name_part_1}_{name_part_2}.png")
     plt.close()
     
     
