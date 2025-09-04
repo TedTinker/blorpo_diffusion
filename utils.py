@@ -1,7 +1,7 @@
 #%%
 
-# I think we need to to make vae_beta go up over time.
-# Consider making STDs pixely-not-imagy
+# Is the unet facing vae encodings which have noise? BAD! 
+# Consider making all STDs pixely-not-imagy
 
 import os
 
@@ -78,9 +78,11 @@ parser.add_argument("--vae_lr",                         type=float,     default 
                     help='Learning rate for generator.') 
 parser.add_argument("--vae_dropout",                    type=int,       default = .0,
                     help='How much dropout for the discriminator?') 
-parser.add_argument("--vae_beta",                       type=float,     default = .03,
+parser.add_argument("--min_beta_vae",                   type=float,     default = -.01,
                     help='Learning rate for discriminator')  
-parser.add_argument("--vae_noise",                      type=float,     default = .2,
+parser.add_argument("--max_beta_vae",                   type=float,     default = .05, 
+                    help='Learning rate for discriminator')  
+parser.add_argument("--change_rate_beta_vae",           type=float,     default = .000004,
                     help='Learning rate for discriminator.')  
 parser.add_argument("--min_noise_vae",                  type=float,     default = 0,
                     help='Learning rate for discriminator.')  
@@ -129,9 +131,9 @@ parser.add_argument("--seeds_used",                     type=int,       default 
 parser.add_argument("--seed_duration",                  type=int,       default = 10,
                     help='When making pictures and videos, how many steps transationing from one to another?') 
 
-parser.add_argument("--actual_noise_list",              type=list,       default = [999,    2.5,    2,      1.5,    1,      .75,    .5,     .25],
+parser.add_argument("--actual_noise_list",              type=list,       default = [999,    1.5,    1,      .75,    .5],
                     help='When making pictures and videos, how many steps transationing from one to another?') 
-parser.add_argument("--lied_noise_list",                type=list,       default = [7,      2.25,   1.75,   1.25,   .5,     .5,     .25,    .1],
+parser.add_argument("--lied_noise_list",                type=list,       default = [7,      1.25,   .5,     .5,     .25],
                     help='When making pictures and videos, how many steps transationing from one to another?') 
 
 
@@ -361,7 +363,7 @@ def plot_vals(plot_vals_dict, save_path='losses.png', fontsize=7):
     plt.plot(vae_epochs, plot_vals_dict["vae_std"], 'green', label="VAE STD", alpha=0.8)
     plt.xlabel("Epochs")
     plt.ylabel("Value")
-    #plt.ylim(-1, 25)
+    plt.ylim(-.2, 1.1)
     ymin, ymax = plt.ylim()   # get current y-axis range
     #yticks = np.arange(np.floor(ymin*10)/10, np.ceil(ymax*10)/10 + 0.1, 0.1)
     #plt.yticks(yticks)
@@ -378,7 +380,7 @@ def plot_vals(plot_vals_dict, save_path='losses.png', fontsize=7):
     plt.xlabel("Epochs")
     plt.yscale("log")
     plt.ylabel("VAE Loss")
-    #plt.ylim(-1, 25)
+    plt.ylim(10**-4, 10**0)
     ymin, ymax = plt.ylim()   # get current y-axis range
     #yticks = np.arange(np.floor(ymin*10)/10, np.ceil(ymax*10)/10 + 0.1, 0.1)
     #plt.yticks(yticks)
@@ -402,6 +404,7 @@ def plot_vals(plot_vals_dict, save_path='losses.png', fontsize=7):
     name_part_1 = 'VAE' if len(unet_epochs) == 0 else 'UNET'
     name_part_2 = len(vae_epochs) if len(unet_epochs) == 0 else len(unet_epochs)
     plt.tight_layout()
+    os.makedirs(save_path, exist_ok=True)
     plt.savefig(save_path + f"/losses_{name_part_1}_{name_part_2}.png")
     plt.close()
     

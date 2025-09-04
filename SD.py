@@ -48,6 +48,7 @@ class SD:
         
         
         self.epochs_for_vae = 1
+        self.current_beta_vae = self.args.min_beta_vae
         self.current_noise_vae = self.args.min_noise_vae
         self.vae = VAE()
         try:
@@ -154,9 +155,10 @@ class SD:
             "real_imgs", "decoded", "dkl_1", "dkl_2", "vae_mu", "vae_std")(
                 self.vae_vs_unet(vae_train = True))
         
-        recon_loss = F.l1_loss(decoded, real_imgs)   
-        dkl_1_loss = self.args.vae_beta * dkl_1
-        dkl_2_loss = self.args.vae_beta * dkl_2
+        recon_loss = F.l1_loss(decoded, real_imgs) 
+        beta = (0 if self.current_beta_vae < 0 else self.current_beta_vae)
+        dkl_1_loss = dkl_1 * beta
+        dkl_2_loss = dkl_2 * beta
         vae_loss = recon_loss + (dkl_1_loss + dkl_2_loss)/2
     
         self.vae_opt.zero_grad(set_to_none=True)
@@ -174,17 +176,23 @@ class SD:
                 module.clamp_weights()
                 
         if self.epochs_for_vae % self.args.epochs_per_vid == 0:
-            print(f"Saving VAE example... (Current Noise: {round(self.current_noise_vae, 2)})")
+            print(f"\nSaving VAE example... \n(Current beta: {round(self.current_beta_vae, 4)}, Current Noise: {round(self.current_noise_vae, 3)})")
             self.save_vae()
             self.save_examples(
-                grid_save_pos = self.gen_location + f"/VAE_example_{self.epochs_for_vae}.png",
-                val_save_pos = self.gen_location)
+                grid_save_pos = self.gen_location + f"/VAE_examples/VAE_example_{self.epochs_for_vae}.png",
+                val_save_pos = self.gen_location + f"/VAE_losses")
         torch.cuda.empty_cache()
                 
         if(self.current_noise_vae < self.args.max_noise_vae):
             self.current_noise_vae += self.args.change_rate_vae
         else:
             self.current_noise_vae = self.args.max_noise_vae
+            
+        if(self.current_beta_vae < self.args.max_beta_vae):
+            self.current_beta_vae += self.args.change_rate_beta_vae
+        else:
+            self.current_beta_vae = self.args.max_beta_vae
+            
         self.epochs_for_vae += 1
         #print(self.epochs_for_vae, end = "... ")
         
@@ -209,7 +217,7 @@ class SD:
                 module.clamp_weights()
     
         if self.epochs_for_unet % self.args.epochs_per_vid == 0:
-            print(f"Saving UNET examples... (Current Noise: {round(self.current_noise_unet, 2)})")
+            print(f"\nSaving UNET examples... \n(Current Noise: {round(self.current_noise_unet, 2)})")
             self.save_unet()
             self.save_examples(
                 grid_save_pos = self.gen_location + f"/UNET_epoch_{self.epochs_for_unet}/UNET_epoch_{self.epochs_for_unet}.png",
@@ -218,7 +226,7 @@ class SD:
             imgs = self.unet_loop(
                 actual_noise_list = self.args.actual_noise_list,       
                 lied_noise_list = self.args.lied_noise_list)
-            save_rel = file_location + f"/generated_images/{self.args.arg_name}/UNET_epoch_{self.epochs_for_unet}/loop"
+            save_rel = self.gen_location + f"/UNET_epoch_{self.epochs_for_unet}/loop"
             show_images_from_tensor(imgs, save_path=save_rel, fps=10) 
         torch.cuda.empty_cache()
         
