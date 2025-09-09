@@ -34,6 +34,7 @@ def sample(mu, std):
     e = Normal(0, 1).sample(std.shape).to(std.device)
     return(mu + e * std)
 
+# Calculating Kullback-Leibler divergence.
 def calculate_dkl(mu_1, std_1, mu_2, std_2):
     std_1 = std_1**2
     std_2 = std_2**2
@@ -236,9 +237,8 @@ class ConvPos(nn.Module):
         return c
 
 
-
     
-    
+# Attention.
 class SelfAttention(nn.Module):
     def __init__(self, in_channels, kernel_size = 1):
         super().__init__()

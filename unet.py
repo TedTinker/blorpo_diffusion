@@ -5,21 +5,17 @@ from utils import file_location
 
 os.chdir(file_location)
 
-import math
-
 import torch
 import torch.nn as nn
 from torchinfo import summary
 from torch.profiler import profile, record_function, ProfilerActivity
-import torch.nn.functional as F
 
 from utils import default_args
-from utils_for_torch import init_weights, ConstrainedConv2d, var, sample, Multi_Kernel_Conv, add_position_layers, \
-    SpaceToDepth, DepthToSpace, SelfAttention
+from utils_for_torch import init_weights, Multi_Kernel_Conv, SelfAttention
 
 
 
-# Let's make a Latent-Space UNet ε-predictor (UNET)!
+# Let's make a Latent-Space UNet ε-predictor (UNET, denoiser)!
 class UNET(nn.Module):
     def __init__(self, args = default_args):
         super(UNET, self).__init__()
@@ -225,6 +221,8 @@ class UNET(nn.Module):
         
         self.apply(init_weights)
         self.to(self.args.device)
+
+
 
     def forward(self, latent, std):
         latent = self.latent(latent)

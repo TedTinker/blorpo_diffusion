@@ -9,10 +9,9 @@ import torch
 import torch.nn as nn
 from torchinfo import summary
 from torch.profiler import profile, record_function, ProfilerActivity
-import torch.nn.functional as F
 
 from utils import default_args
-from utils_for_torch import init_weights, SelfAttention, get_stats, rgb_to_circular_hsv, calculate_dkl, ConstrainedConv2d, var, sample, Multi_Kernel_Conv, add_position_layers, SpaceToDepth, DepthToSpace
+from utils_for_torch import init_weights, SelfAttention, get_stats, rgb_to_circular_hsv, calculate_dkl, var, sample, Multi_Kernel_Conv, SpaceToDepth, DepthToSpace
 
 
 
@@ -210,13 +209,6 @@ class VAE(nn.Module):
         self.apply(init_weights)
         self.to(self.args.device)
         
-        
-        
-    def reparam(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return mu + eps * std
-    
     
 
     def forward(self, images_rgb, use_std = True):
@@ -243,12 +235,11 @@ class VAE(nn.Module):
         # Decode, grow.
         decoded = (self.decode(encoded) + 1) / 2
         
-        # Calculate DKL.
+        # Calculate DKL. (Using both of these is called Jensen-Shannon divergence.)
         dkl_1 = calculate_dkl(mu, std, torch.zeros_like(mu), torch.ones_like(std)).mean()
         dkl_2 = calculate_dkl(torch.zeros_like(mu), torch.ones_like(std), mu, std).mean()
                 
         return decoded, encoded, dkl_1, dkl_2, mu, std
-
 
 
 

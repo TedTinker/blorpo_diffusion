@@ -1,7 +1,7 @@
 #%%
 
-# Is the unet facing vae encodings which have noise? BAD! 
-# Consider making all STDs pixely-not-imagy
+# Check if increasing noise over time helps.
+# Consider making all STDs pixely-not-imagy.
 
 import os
 
@@ -73,55 +73,49 @@ parser.add_argument("--device",                         type=str,       default 
 
     # Easy options
 parser.add_argument("--epochs_for_vae",                 type=int,       default = 20000,
-                    help='How many epochs for training?') 
+                    help='How many epochs for training VAE?') 
 parser.add_argument("--vae_lr",                         type=float,     default = .001,
-                    help='Learning rate for generator.') 
+                    help='Learning rate for VAE.') 
 parser.add_argument("--vae_dropout",                    type=int,       default = .0,
-                    help='How much dropout for the discriminator?') 
+                    help='How much dropout for the VAE?') 
 parser.add_argument("--min_beta_vae",                   type=float,     default = -.01,
-                    help='Learning rate for discriminator')  
+                    help='Smallest value of beta (VAE DKL).')  
 parser.add_argument("--max_beta_vae",                   type=float,     default = .05, 
-                    help='Learning rate for discriminator')  
+                    help='Largest value of beta (VAE DKL).')  
 parser.add_argument("--change_rate_beta_vae",           type=float,     default = .000004,
-                    help='Learning rate for discriminator.')  
+                    help='How quickly beta increases.')  
 parser.add_argument("--min_noise_vae",                  type=float,     default = 0,
-                    help='Learning rate for discriminator.')  
-parser.add_argument("--max_noise_vae",                  type=float,     default = .3,
-                    help='Learning rate for discriminator.')  
+                    help='Smallest noise for VAE.')  
+parser.add_argument("--max_noise_vae",                  type=float,     default = .5,
+                    help='Largest noise for VAE.')  
 parser.add_argument("--change_rate_vae",                type=float,     default = .00002,
-                    help='Learning rate for discriminator.')  
+                    help='How quickly VAE noise increases.')  
 
 parser.add_argument("--epochs_for_unet",                type=int,       default = 500000,
-                    help='How many epochs for training?') 
+                    help='How many epochs for training UNET?') 
 parser.add_argument("--unet_lr",                        type=float,     default = .001,
-                    help='Learning rate for discriminator.')  
+                    help='Learning rate for UNET.')  
 parser.add_argument("--unet_dropout",                   type=int,       default = .0,
-                    help='How much dropout for the discriminator?') 
+                    help='How much dropout for the UNET?') 
 parser.add_argument("--min_noise_unet",                 type=float,     default = .3,
-                    help='Learning rate for discriminator.')  
+                    help='Smallest noise for UNET.')  
 parser.add_argument("--max_noise_unet",                 type=float,     default = 7,
-                    help='Learning rate for discriminator.')  
+                    help='Largest noise for UNET.')  
 parser.add_argument("--change_rate_unet",               type=float,     default = .001,
-                    help='Learning rate for discriminator.')  
+                    help='How quickly UNET noise increases.')  
 
 parser.add_argument("--batch_size",                     type=int,       default = 64,
                     help='How large are the batches used in epochs?') 
 parser.add_argument("--image_size",                     type=int,       default = 64,
-                    help='How large are the pictures? (Not used much.)') 
+                    help='How large are the pictures?') 
 parser.add_argument("--latent_channels",                type=int,       default = 32,
-                    help='How large are some linear layers.') 
+                    help='How large is the encoding?') 
 parser.add_argument('--std_min',                        type=int,       default = exp(-20),
                     help='Minimum value for standard deviation.') 
 parser.add_argument('--std_max',                        type=int,       default = exp(2),
                     help='Maximum value for standard deviation.') 
-parser.add_argument("--rolling_avg_num",                type=int,       default = 10,
-                    help='How many values used in the rolling average?') 
-parser.add_argument("--rolling_avg_val",                type=float,     default = .95,
-                    help='Max value of discriminator accuracy for training.')  
 parser.add_argument("--stat_quantiles",                 type=list,     default = [0.05, .5, 0.95],
-                    help='Quantiles for the get_stats function.')  
-parser.add_argument("--use_hsv",                        type=bool,     default = True,
-                    help='Should the discriminator use the HSV?')  
+                    help='Quantiles for the get_stats function. Not in use.')  
 
     # Presentation options
 parser.add_argument("--epochs_per_vid",                 type=int,       default = 250,
@@ -129,12 +123,12 @@ parser.add_argument("--epochs_per_vid",                 type=int,       default 
 parser.add_argument("--seeds_used",                     type=int,       default = 10,
                     help='When making pictures and videos, how many seeds?') 
 parser.add_argument("--seed_duration",                  type=int,       default = 10,
-                    help='When making pictures and videos, how many steps transationing from one to another?') 
+                    help='When making pictures and videos, how many steps transationing from one seed to another?') 
 
-parser.add_argument("--actual_noise_list",              type=list,       default = [999,    1.5,    1,      .75,    .5],
-                    help='When making pictures and videos, how many steps transationing from one to another?') 
-parser.add_argument("--lied_noise_list",                type=list,       default = [7,      1.25,   .5,     .5,     .25],
-                    help='When making pictures and videos, how many steps transationing from one to another?') 
+parser.add_argument("--actual_noise_list",              type=list,       default = [999,    2,          1.5,        1],
+                    help='In the UNET loop, what noise do we add to the encodings?') 
+parser.add_argument("--lied_noise_list",                type=list,       default = [7,      1.5,        1,          .5],
+                    help='In the UNET loop, what noise do we tell the UNET we added to the encodings?') 
 
 
 
@@ -221,7 +215,7 @@ for file_name in image_files:
     flipped_image_tensor = transform(flipped_image)
     images.append(flipped_image_tensor)
 all_images_tensor = torch.stack(images).to(device)
-these_pokemon = [1, 4, 7, 25, 38, 53, 63, 69, 83, 140]
+these_pokemon = [1, 4, 7, 25, 38, 53, 63, 69, 83, 140] # Some of my favorites! :D
 these_pokemon = [(i-1)*2 for i in these_pokemon]
 pokemon_sample = all_images_tensor[these_pokemon]
 
@@ -235,13 +229,11 @@ def get_random_batch(all_images_tensor = all_images_tensor, batch_size=64):
     return batch_tensor
 
 
-
-def save_vae_comparison_grid(real_pokemon, vae_pokemon, noisy_pokemon, unet_pokemon, filename, std):
-    # Move to CPU for plotting
-    
+# Making an image to display model's training.
+def save_comparison_grid(real_pokemon, real_pokemon_noisy, vae_pokemon, noisy_pokemon, unet_pokemon, filename, std):    
     N = real_pokemon.size(0)
     # Build a 2 x N grid: top = originals, bottom = reconstructions
-    fig, axes = plt.subplots(5, N, figsize=(2*N, 4), squeeze=False)
+    fig, axes = plt.subplots(6, N, figsize=(2*N, 6), squeeze=False)
     for i in range(N):
         # Originals
         ax = axes[0, i]
@@ -249,29 +241,36 @@ def save_vae_comparison_grid(real_pokemon, vae_pokemon, noisy_pokemon, unet_poke
         ax.axis("off")
         if i == 0:
             ax.set_title("original", fontsize=10)
+            
+        # Noisy originals.
+        ax = axes[1, i]
+        ax.imshow(real_pokemon_noisy[i].cpu().permute(1, 2, 0).numpy())
+        ax.axis("off")
+        if i == 0:
+            ax.set_title("original noisy", fontsize=10)
 
         # Reconstructions
-        ax = axes[1, i]
+        ax = axes[2, i]
         ax.imshow(vae_pokemon[i].cpu().permute(1, 2, 0).numpy())
         ax.axis("off")
         if i == 0:
             ax.set_title("reconstruction", fontsize=10)
             
         # Reconstructions after unet
-        ax = axes[2, i]
+        ax = axes[3, i]
         ax.imshow(noisy_pokemon[i].cpu().permute(1, 2, 0).numpy())
         ax.axis("off")
         if i == 0:
             ax.set_title("reconstruction of noisy", fontsize=10)
             
         # Reconstructions after unet
-        ax = axes[3, i]
+        ax = axes[4, i]
         ax.imshow(unet_pokemon[i].cpu().permute(1, 2, 0).numpy())
         ax.axis("off")
         if i == 0:
             ax.set_title("reconstruction w/ unet", fontsize=10)
             
-        ax = axes[4, i]
+        ax = axes[5, i]
         ax.text(0.5, 0.5, f"{round(std[i].item(), 2)}")
         ax.axis("off")
         if i == 0:
@@ -283,7 +282,7 @@ def save_vae_comparison_grid(real_pokemon, vae_pokemon, noisy_pokemon, unet_poke
 
 
 
-# Make pictures, then make gif transitioning between them.
+# Make pictures, then make gif transitioning between them. (The video doesn't look good, because of so much randomness.)
 def show_images_from_tensor(image_tensor, save_path='output_folder', fps=10):
     os.makedirs(save_path, exist_ok=True)
 
@@ -347,7 +346,6 @@ def make_animation(save_dir, image_name='1.png', output_name='animation_1.gif'):
     
     
     
-# MUST BE CHANGED FOR STABLE DIFFUSION
 # Plotting losses, entropy, curiosity, etc.
 def plot_vals(plot_vals_dict, save_path='losses.png', fontsize=7):
 

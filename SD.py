@@ -3,19 +3,16 @@ import os
 from utils import file_location
 os.chdir(file_location)
 
-from collections import Counter
 import datetime
-import numpy as np
 import operator
-import pickle
 
 import torch 
 from torch.optim import Adam
 import torch.nn.functional as F
 from torch.distributions import Normal
 
-from utils import default_args, pokemon_sample, plot_vals, get_random_batch, print, duration, show_images_from_tensor, save_vae_comparison_grid
-from utils_for_torch import sample, create_interpolated_tensor, ConstrainedConv2d
+from utils import default_args, pokemon_sample, plot_vals, get_random_batch, print, duration, show_images_from_tensor, save_comparison_grid
+from utils_for_torch import create_interpolated_tensor, ConstrainedConv2d
 from vae import VAE
 from unet import UNET
 
@@ -98,13 +95,15 @@ class SD:
         if(new_batch):  real_imgs = get_random_batch(batch_size=self.args.batch_size)
         else:           real_imgs = self.pokemon
         
-        b = real_imgs.size(0)
-        std = torch.rand(b, 1, 1, 1, device=self.args.device) * self.current_noise_vae
-        eps = torch.randn_like(real_imgs)
-        real_imgs_noisy = (real_imgs + std * eps)
+        std = torch.rand_like(real_imgs) * self.current_noise_vae
+        epsilon = torch.randn_like(real_imgs)
+        real_imgs_noisy = real_imgs + std * epsilon
         real_imgs_noisy_for_plotting = real_imgs_noisy.clamp_(0, 1)
             
-        if(unet_train or not new_batch):
+        if(unet_train):
+            with torch.no_grad():                          
+                decoded, encoded, dkl_1, dkl_2, vae_mu, vae_std = self.vae(real_imgs, use_std=False)
+        elif(not new_batch):
             with torch.no_grad():                          
                 decoded, encoded, dkl_1, dkl_2, vae_mu, vae_std = self.vae(real_imgs_noisy, use_std=False)
         else:
@@ -180,18 +179,18 @@ class SD:
             self.save_vae()
             self.save_examples(
                 grid_save_pos = self.gen_location + f"/VAE_examples/VAE_example_{self.epochs_for_vae}.png",
-                val_save_pos = self.gen_location + f"/VAE_losses")
+                val_save_pos = self.gen_location + "/VAE_losses")
         torch.cuda.empty_cache()
+        
+        if(self.current_beta_vae < self.args.max_beta_vae):
+            self.current_beta_vae += self.args.change_rate_beta_vae
+        else:
+            self.current_beta_vae = self.args.max_beta_vae
                 
         if(self.current_noise_vae < self.args.max_noise_vae):
             self.current_noise_vae += self.args.change_rate_vae
         else:
             self.current_noise_vae = self.args.max_noise_vae
-            
-        if(self.current_beta_vae < self.args.max_beta_vae):
-            self.current_beta_vae += self.args.change_rate_beta_vae
-        else:
-            self.current_beta_vae = self.args.max_beta_vae
             
         self.epochs_for_vae += 1
         #print(self.epochs_for_vae, end = "... ")
@@ -271,10 +270,10 @@ class SD:
 
     def save_examples(self, grid_save_pos, val_save_pos):
         with torch.no_grad():
-            real_imgs_noisy, decoded, noisy_imgs, predicted_imgs = operator.itemgetter(
-                "real_imgs_noisy", "decoded", "noisy_imgs", "predicted_imgs")(
+            real_imgs, real_imgs_noisy, decoded, noisy_imgs, predicted_imgs = operator.itemgetter(
+                "real_imgs", "real_imgs_noisy", "decoded", "noisy_imgs", "predicted_imgs")(
                     self.vae_vs_unet(new_batch = False))
-        save_vae_comparison_grid(real_imgs_noisy, decoded, noisy_imgs, predicted_imgs, grid_save_pos, self.std)
+        save_comparison_grid(real_imgs, real_imgs_noisy, decoded, noisy_imgs, predicted_imgs, grid_save_pos, self.std)
         plot_vals(self.plot_vals_dict, val_save_pos)
         
     
